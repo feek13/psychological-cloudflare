@@ -1,0 +1,11 @@
+name = "scoring-worker"
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+[vars]
+ENVIRONMENT = "production"
+
+# Uncomment if you need KV storage
+# [[kv_namespaces]]
+# binding = "CACHE"
+# id = "xxx"
