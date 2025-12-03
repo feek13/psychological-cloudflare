@@ -414,27 +414,109 @@ export default function AssessmentPage() {
             上一题
           </Button>
 
-          <div className="flex gap-2">
-            {questions.map((_, idx) => {
-              const isAnswered = answers[questions[idx].id] !== undefined;
-              const isCurrent = idx === currentIndex;
-              return (
-                <motion.button
-                  key={idx}
-                  onClick={() => setCurrentIndex(idx)}
-                  whileHover={{ scale: 1.2 }}
-                  whileTap={{ scale: 0.9 }}
-                  className={`h-2 rounded-full transition-all ${
-                    isCurrent
-                      ? 'bg-primary-600 w-6'
-                      : isAnswered
-                      ? 'bg-primary-300 dark:bg-primary-700 w-2'
-                      : 'bg-red-400 dark:bg-red-600 w-2 ring-2 ring-red-200 dark:ring-red-800'
-                  }`}
-                  title={`第 ${idx + 1} 题${isAnswered ? '（已作答）' : '（未作答）'}`}
-                />
+          {/* Smart Progress Navigator - 智能进度导航 */}
+          <div className="flex-1 max-w-md mx-4">
+            {(() => {
+              // 计算可见窗口范围
+              const windowSize = 7; // 显示7个点
+              const halfWindow = Math.floor(windowSize / 2);
+              let startIdx = Math.max(0, currentIndex - halfWindow);
+              let endIdx = Math.min(totalQuestions - 1, startIdx + windowSize - 1);
+
+              // 调整起始位置确保显示完整窗口
+              if (endIdx - startIdx < windowSize - 1) {
+                startIdx = Math.max(0, endIdx - windowSize + 1);
+              }
+
+              // 找到下一个未答题的索引
+              const nextUnansweredIdx = questions.findIndex((q, idx) =>
+                idx > currentIndex && answers[q.id] === undefined
               );
-            })}
+
+              // 找到第一个未答题
+              const firstUnansweredIdx = questions.findIndex(q => answers[q.id] === undefined);
+
+              return (
+                <div className="flex items-center justify-center gap-2">
+                  {/* 跳转到开头 */}
+                  {startIdx > 0 && (
+                    <motion.button
+                      onClick={() => setCurrentIndex(0)}
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 bg-gray-100 dark:bg-gray-800 rounded-full transition-colors"
+                      title="跳转到第1题"
+                    >
+                      <span>1</span>
+                      <span className="text-gray-400">...</span>
+                    </motion.button>
+                  )}
+
+                  {/* 可见窗口内的题目点 */}
+                  <div className="flex items-center gap-1.5">
+                    {Array.from({ length: endIdx - startIdx + 1 }, (_, i) => {
+                      const idx = startIdx + i;
+                      const isAnswered = answers[questions[idx].id] !== undefined;
+                      const isCurrent = idx === currentIndex;
+
+                      return (
+                        <motion.button
+                          key={idx}
+                          onClick={() => setCurrentIndex(idx)}
+                          whileHover={{ scale: 1.3, y: -2 }}
+                          whileTap={{ scale: 0.9 }}
+                          initial={{ opacity: 0, scale: 0 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: i * 0.02 }}
+                          className={`relative transition-all duration-200 ${
+                            isCurrent
+                              ? 'w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg shadow-primary-500/30'
+                              : isAnswered
+                              ? 'w-3 h-3 rounded-full bg-primary-400 dark:bg-primary-600'
+                              : 'w-3 h-3 rounded-full bg-red-400 dark:bg-red-500 ring-2 ring-red-200 dark:ring-red-800/50 animate-pulse'
+                          }`}
+                          title={`第 ${idx + 1} 题${isAnswered ? '（已作答）' : '（未作答）'}`}
+                        >
+                          {isCurrent && (
+                            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">
+                              {idx + 1}
+                            </span>
+                          )}
+                        </motion.button>
+                      );
+                    })}
+                  </div>
+
+                  {/* 跳转到结尾 */}
+                  {endIdx < totalQuestions - 1 && (
+                    <motion.button
+                      onClick={() => setCurrentIndex(totalQuestions - 1)}
+                      whileHover={{ scale: 1.1 }}
+                      whileTap={{ scale: 0.9 }}
+                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 bg-gray-100 dark:bg-gray-800 rounded-full transition-colors"
+                      title={`跳转到第${totalQuestions}题`}
+                    >
+                      <span className="text-gray-400">...</span>
+                      <span>{totalQuestions}</span>
+                    </motion.button>
+                  )}
+
+                  {/* 快速跳转到下一个未答题 */}
+                  {firstUnansweredIdx !== -1 && firstUnansweredIdx !== currentIndex && (
+                    <motion.button
+                      onClick={() => setCurrentIndex(firstUnansweredIdx)}
+                      whileHover={{ scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      className="ml-2 flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 rounded-full transition-colors border border-amber-200 dark:border-amber-800"
+                      title={`跳转到第${firstUnansweredIdx + 1}题（未作答）`}
+                    >
+                      <AlertCircle size={12} />
+                      <span>第{firstUnansweredIdx + 1}题</span>
+                    </motion.button>
+                  )}
+                </div>
+              );
+            })()}
           </div>
 
           {currentIndex === totalQuestions - 1 ? (
