@@ -62,7 +62,7 @@ export default function Dashboard() {
     const fetchData = async () => {
       try {
         const [scalesRes, assessmentsRes, scoresRes] = await Promise.all([
-          scalesAPI.list({ is_active: true, limit: 20 }),
+          scalesAPI.listPublished({ limit: 20 }),  // Use listPublished to get scales visible to student
           assessmentsAPI.list({ limit: 100 }),
           assessmentsAPI.getScoreStats()
         ]);
