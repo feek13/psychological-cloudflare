@@ -13,6 +13,7 @@ export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKe
     autoRefreshToken: true,
     persistSession: true,
     detectSessionInUrl: true,
+    storageKey: 'sb-supabase-auth-token', // Fixed storage key to avoid URL-based key mismatch
   },
 });
 
@@ -125,9 +126,10 @@ export const getUserProfile = async (userId?: string) => {
     .from('profiles')
     .select('*')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
 
   if (error) throw error;
+  if (!data) throw new Error('Profile not found');
   return data;
 };
 

@@ -6,6 +6,7 @@
  */
 
 import supabase, { getCurrentUser, getUserProfile } from './supabase';
+import { formatSuccess as formatResponse } from './utils';
 import type {
   APIResponse,
   TeacherGradeAssign,
@@ -14,12 +15,6 @@ import type {
   Grade,
 } from '@/types';
 import type { TeacherPermissionDetail } from '@/types/teachers';
-
-// Helper to format response
-const formatResponse = <T>(data: T): APIResponse<T> => ({
-  success: true,
-  data
-});
 
 export const teachersAPI = {
   /**
@@ -137,7 +132,7 @@ export const teachersAPI = {
           .from('classes')
           .select('enrollment_year')
           .eq('id', perm.class_id)
-          .single();
+          .maybeSingle();
 
         if (cls && !grades.includes(cls.enrollment_year)) {
           grades.push(cls.enrollment_year as Grade);
@@ -215,7 +210,7 @@ export const teachersAPI = {
       .select('*')
       .eq('id', teacherId)
       .eq('role', 'teacher')
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     if (!teacher) throw new Error('Teacher not found');
@@ -235,7 +230,7 @@ export const teachersAPI = {
             .from('colleges')
             .select('name')
             .eq('id', perm.college_id)
-            .single();
+            .maybeSingle();
           collegeName = college?.name;
         }
 
@@ -244,7 +239,7 @@ export const teachersAPI = {
             .from('majors')
             .select('name')
             .eq('id', perm.major_id)
-            .single();
+            .maybeSingle();
           majorName = major?.name;
         }
 
@@ -253,7 +248,7 @@ export const teachersAPI = {
             .from('classes')
             .select('name')
             .eq('id', perm.class_id)
-            .single();
+            .maybeSingle();
           className = cls?.name;
         }
 
@@ -341,7 +336,7 @@ export const teachersAPI = {
           .from('classes')
           .select('enrollment_year')
           .eq('id', perm.class_id)
-          .single();
+          .maybeSingle();
 
         if (cls && cls.enrollment_year === grade) {
           await supabase

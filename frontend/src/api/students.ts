@@ -6,6 +6,7 @@
  */
 
 import supabase, { getCurrentUser, getUserProfile } from './supabase';
+import { formatSuccess as formatResponse } from './utils';
 import type {
   APIResponse,
   StudentListItem,
@@ -16,12 +17,6 @@ import type {
   StudentFilters,
   PaginatedResponse,
 } from '@/types';
-
-// Helper to format response
-const formatResponse = <T>(data: T): APIResponse<T> => ({
-  success: true,
-  data
-});
 
 /**
  * Build permission filter for teachers
@@ -186,7 +181,7 @@ export const studentsAPI = {
       .select('*')
       .eq('id', studentId)
       .eq('role', 'student')
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     if (!student) throw new Error('Student not found');

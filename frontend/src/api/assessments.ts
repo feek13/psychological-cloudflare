@@ -4,8 +4,9 @@
  */
 
 import supabase, { getCurrentUser } from './supabase';
-import type { Assessment, ScoreStatistics } from '@/types/assessment';
+import { formatResponse } from './utils';
 import type { APIResponse } from '@/types';
+import type { Assessment, ScoreStatistics } from '@/types/assessment';
 
 // Worker URLs (will be configured via environment variables after deployment)
 const SCORING_WORKER_URL = import.meta.env.VITE_SCORING_WORKER_URL || '';
@@ -37,22 +38,6 @@ interface AIReportResponse {
   report?: string;
   model_used?: string;
   error?: string;
-}
-
-// Helper to format API response
-function formatResponse<T>(data: T | null, error: Error | null, message?: string): APIResponse<T> {
-  if (error) {
-    return {
-      success: false,
-      message: error.message,
-      data: undefined as unknown as T,
-    };
-  }
-  return {
-    success: true,
-    message: message || 'Success',
-    data: data as T,
-  };
 }
 
 // Call Scoring Worker
@@ -249,43 +234,54 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('未登录'));
       }
 
-      // Check for existing active assessment
-      const { data: existing } = await supabase
+      // Helper function to fetch assessment with scale
+      const fetchAssessmentWithScale = async (assessmentId: string) => {
+        const { data: assessment, error } = await supabase
+          .from('assessments')
+          .select('*')
+          .eq('id', assessmentId)
+          .maybeSingle();
+
+        if (error) throw error;
+        if (!assessment) return null;
+
+        // Fetch scale separately
+        let scale = null;
+        if (assessment.scale_id) {
+          const { data: scaleData } = await supabase
+            .from('scales')
+            .select('id, code, name, category')
+            .eq('id', assessment.scale_id)
+            .maybeSingle();
+          scale = scaleData;
+        }
+
+        return { ...assessment, scales: scale } as Assessment;
+      };
+
+      // Check for existing active assessment (use array query to handle potential duplicates)
+      const { data: existingList } = await supabase
         .from('assessments')
         .select('id, status')
         .eq('user_id', user.id)
         .eq('scale_id', scaleId)
-        .in('status', ['in_progress', 'completed'])
-        .maybeSingle();
+        .neq('status', 'abandoned')
+        .order('started_at', { ascending: false })
+        .limit(1);
 
+      const existing = existingList?.[0];
       if (existing) {
         if (existing.status === 'completed') {
           return formatResponse(null, new Error('您已完成此量表的测评'));
         }
         // Return existing in-progress assessment with scale info
-        const { data: assessment, error } = await supabase
-          .from('assessments')
-          .select('*')
-          .eq('id', existing.id)
-          .single();
-
-        if (error) throw error;
-
-        // Fetch scale separately
-        let scale = null;
-        if (assessment?.scale_id) {
-          const { data: scaleData } = await supabase
-            .from('scales')
-            .select('id, code, name, category')
-            .eq('id', assessment.scale_id)
-            .single();
-          scale = scaleData;
+        const assessment = await fetchAssessmentWithScale(existing.id);
+        if (assessment) {
+          return formatResponse(assessment, null, '继续进行中的测评');
         }
-
-        return formatResponse({ ...assessment, scales: scale } as Assessment, null, '继续进行中的测评');
       }
 
-      // Create new assessment
+      // Try to create new assessment
       const { data: newAssessment, error } = await supabase
         .from('assessments')
         .insert({
@@ -299,16 +295,46 @@ export const assessmentsAPI = {
         .select('*')
         .single();
 
-      if (error) throw error;
+      // Handle duplicate key error (409) - assessment already exists
+      if (error) {
+        const errorCode = (error as any).code;
+        const errorMessage = error.message || '';
 
-      // Fetch scale separately
+        // Check for unique constraint violation (409 or 23505)
+        // This is expected behavior during race conditions - handle silently
+        if (errorCode === '23505' || errorCode === 409 || errorMessage.includes('duplicate') || errorMessage.includes('unique constraint')) {
+          // Re-query to find the existing assessment (use a broader query)
+          const { data: existingAssessments } = await supabase
+            .from('assessments')
+            .select('id, status')
+            .eq('user_id', user.id)
+            .eq('scale_id', scaleId)
+            .neq('status', 'abandoned')
+            .order('started_at', { ascending: false })
+            .limit(1);
+
+          if (existingAssessments && existingAssessments.length > 0) {
+            const existingAssessment = existingAssessments[0];
+            if (existingAssessment.status === 'completed') {
+              return formatResponse(null, new Error('您已完成此量表的测评'));
+            }
+            const assessment = await fetchAssessmentWithScale(existingAssessment.id);
+            if (assessment) {
+              return formatResponse(assessment, null, '继续进行中的测评');
+            }
+          }
+        }
+        throw error;
+      }
+
+      // Fetch scale for new assessment
       let scale = null;
       if (newAssessment?.scale_id) {
         const { data: scaleData } = await supabase
           .from('scales')
           .select('id, code, name, category')
           .eq('id', newAssessment.scale_id)
-          .single();
+          .maybeSingle();
         scale = scaleData;
       }
 
@@ -402,14 +428,18 @@ export const assessmentsAPI = {
       }
 
       // Step 1: Query assessment without embedded relation
+      // Use maybeSingle() to avoid 406 error when no record found
       const { data: assessment, error } = await supabase
         .from('assessments')
         .select('*')
         .eq('id', id)
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
+      if (!assessment) {
+        return formatResponse(null, new Error('测评不存在或无权访问'));
+      }
 
       // Step 2: Fetch scale separately if exists
       let scale = null;
@@ -451,14 +481,18 @@ export const assessmentsAPI = {
       }
 
       // Get current assessment (without embedded query)
+      // Use maybeSingle() to avoid 406 error when no record found
       const { data: assessment, error: fetchError } = await supabase
         .from('assessments')
         .select('answers')
         .eq('id', id)
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
+      if (!assessment) {
+        return formatResponse(null, new Error('测评不存在或无权访问'));
+      }
 
       // Update answers
       const currentAnswers = (assessment.answers as Record<string, number>) || {};
@@ -500,12 +534,13 @@ export const assessmentsAPI = {
       }
 
       // Get assessment without embedded query
+      // Use maybeSingle() to avoid 406 error when no record found
       const { data: assessment, error: fetchError } = await supabase
         .from('assessments')
         .select('*')
         .eq('id', id)
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
       if (!assessment) {
@@ -517,7 +552,7 @@ export const assessmentsAPI = {
         .from('scales')
         .select('id, code, name, category, scoring_config')
         .eq('id', assessment.scale_id)
-        .single();
+        .maybeSingle();
 
       if (scaleError) throw scaleError;
       if (!scale) {
@@ -763,12 +798,13 @@ export const assessmentsAPI = {
       }
 
       // Get assessment without embedded query
+      // Use maybeSingle() to avoid 406 error when no record found
       const { data: assessment, error: fetchError } = await supabase
         .from('assessments')
         .select('*')
         .eq('id', id)
         .eq('user_id', user.id)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
       if (!assessment) {
@@ -784,7 +820,7 @@ export const assessmentsAPI = {
         .from('scales')
         .select('id, code, name, category')
         .eq('id', assessment.scale_id)
-        .single();
+        .maybeSingle();
 
       if (scaleError) throw scaleError;
       if (!scale) {

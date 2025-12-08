@@ -133,7 +133,6 @@ export const authStore = create<AuthState>()(
               });
             } else if (event === 'TOKEN_REFRESHED') {
               // Token refresh is handled automatically by Supabase SDK
-              console.log('Token refreshed');
             }
           });
 

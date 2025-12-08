@@ -6,6 +6,7 @@
  */
 
 import supabase, { getCurrentUser, getUserProfile } from './supabase';
+import { formatSuccess as formatResponse } from './utils';
 import type {
   APIResponse,
   PublicationCreate,
@@ -15,12 +16,6 @@ import type {
   PublicationFilters,
   PaginatedResponse,
 } from '@/types';
-
-// Helper to format response
-const formatResponse = <T>(data: T): APIResponse<T> => ({
-  success: true,
-  data
-});
 
 export const publicationsAPI = {
   /**
@@ -119,7 +114,7 @@ export const publicationsAPI = {
       .from('scale_publications')
       .select('*')
       .eq('id', publicationId)
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     if (!publication) throw new Error('Publication not found');
@@ -137,7 +132,7 @@ export const publicationsAPI = {
       .from('scales')
       .select('id, name, code, description')
       .eq('id', publication.scale_id)
-      .single();
+      .maybeSingle();
 
     // Get statistics
     const stats = await getPublicationStatistics(publication);
@@ -149,7 +144,7 @@ export const publicationsAPI = {
         .from('colleges')
         .select('name')
         .eq('id', publication.target_college_id)
-        .single();
+        .maybeSingle();
       collegeName = college?.name;
     }
     if (publication.target_major_id) {
@@ -157,7 +152,7 @@ export const publicationsAPI = {
         .from('majors')
         .select('name')
         .eq('id', publication.target_major_id)
-        .single();
+        .maybeSingle();
       majorName = major?.name;
     }
     if (publication.target_class_id) {
@@ -165,7 +160,7 @@ export const publicationsAPI = {
         .from('classes')
         .select('name')
         .eq('id', publication.target_class_id)
-        .single();
+        .maybeSingle();
       className = cls?.name;
     }
 
@@ -195,7 +190,7 @@ export const publicationsAPI = {
       .from('scale_publications')
       .select('published_by')
       .eq('id', publicationId)
-      .single();
+      .maybeSingle();
 
     if (fetchError) throw fetchError;
     if (!publication) throw new Error('Publication not found');
@@ -240,7 +235,7 @@ export const publicationsAPI = {
       .from('scale_publications')
       .select('published_by')
       .eq('id', publicationId)
-      .single();
+      .maybeSingle();
 
     if (fetchError) throw fetchError;
     if (!publication) throw new Error('Publication not found');
@@ -356,7 +351,7 @@ async function enrichPublicationsWithDetails(publications: any[]): Promise<Publi
           .from('colleges')
           .select('name')
           .eq('id', pub.target_college_id)
-          .single();
+          .maybeSingle();
         collegeName = college?.name;
       }
       if (pub.target_major_id) {
@@ -364,7 +359,7 @@ async function enrichPublicationsWithDetails(publications: any[]): Promise<Publi
           .from('majors')
           .select('name')
           .eq('id', pub.target_major_id)
-          .single();
+          .maybeSingle();
         majorName = major?.name;
       }
       if (pub.target_class_id) {
@@ -372,7 +367,7 @@ async function enrichPublicationsWithDetails(publications: any[]): Promise<Publi
           .from('classes')
           .select('name')
           .eq('id', pub.target_class_id)
-          .single();
+          .maybeSingle();
         className = cls?.name;
       }
 

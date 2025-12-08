@@ -1,19 +1,18 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { authStore } from '@/store/authStore';
 import { scalesAPI } from '@/api/scales';
 import { assessmentsAPI } from '@/api/assessments';
-import MainLayout from '@/components/layout/MainLayout';
-import Card from '@/components/ui/Card';
-import Button from '@/components/ui/Button';
-import ScaleCard from '@/components/ScaleCard';
-import { SkeletonCard, SkeletonGrid } from '@/components/ui/Skeleton';
-import EmptyState from '@/components/ui/EmptyState';
+import FloatingNav from '@/components/layout/FloatingNav';
+import HeroSection from '@/components/dashboard/HeroSection';
+import JourneyTimeline from '@/components/dashboard/JourneyTimeline';
+import EnhancedScaleCard from '@/components/dashboard/EnhancedScaleCard';
+import { SkeletonCard } from '@/components/ui/Skeleton';
+import { Sparkles, ArrowRight, Zap, PenLine, Compass, ClipboardList } from 'lucide-react';
 import type { Assessment, ScoreStatistics } from '@/types/assessment';
 import type { Scale } from '@/types/scale';
-import { TrendingUp, TrendingDown, Minus, ClipboardList, CheckCircle2, Clock, Activity, Brain } from 'lucide-react';
 
-// 状态映射类型
+// Status map type
 interface StatusMapItem {
   assessment_id: string;
   status: string;
@@ -29,10 +28,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [scales, setScales] = useState<Scale[]>([]);
   const [allAssessments, setAllAssessments] = useState<Assessment[]>([]);
-  const [prevStats, setPrevStats] = useState({ total: 0, completed: 0, inProgress: 0 });
-  const [dataLoaded, setDataLoaded] = useState(false);
   const [scoreStats, setScoreStats] = useState<ScoreStatistics | null>(null);
-  // 新增：批量状态映射
   const [statusMap, setStatusMap] = useState<Record<string, StatusMapItem>>({});
   const [statusLoading, setStatusLoading] = useState(true);
 
@@ -43,63 +39,42 @@ export default function Dashboard() {
     }
   }, [user, navigate]);
 
-  // 当用户ID变化时（切换账户），重置状态
+  // Reset state when user ID changes (account switch)
   useEffect(() => {
     if (user?.id) {
-      // 重置状态以触发重新获取
       setScales([]);
       setAllAssessments([]);
       setScoreStats(null);
       setStatusMap({});
-      setDataLoaded(false);
       setLoading(true);
       setStatusLoading(true);
     }
   }, [user?.id]);
 
   useEffect(() => {
-    // Don't fetch data until auth is initialized and user is authenticated
     if (!initialized || !isAuthenticated || !user?.id) {
       return;
     }
 
-    // Load previous stats from localStorage (使用用户ID区分的 key)
-    const statsKey = `dashboard_stats_${user.id}`;
-    const savedStats = localStorage.getItem(statsKey);
-    if (savedStats) {
-      try {
-        const parsed = JSON.parse(savedStats);
-        // 验证数据格式有效
-        if (parsed && typeof parsed.total === 'number') {
-          setPrevStats(parsed);
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
-    // 使用 AbortController 来正确取消请求
     const abortController = new AbortController();
     let isMounted = true;
 
     const fetchData = async () => {
       try {
-        // 并行请求 - 不使用 signal（让请求完成，只是不更新状态）
         const [scalesRes, assessmentsRes, scoresRes] = await Promise.all([
           scalesAPI.list({ is_active: true, limit: 20 }),
           assessmentsAPI.list({ limit: 100 }),
           assessmentsAPI.getScoreStats()
         ]);
 
-        // 如果已取消，不更新状态
         if (abortController.signal.aborted || !isMounted) return;
 
-        // 处理量表数据
+        // Process scales data
         if (scalesRes.success) {
           const scalesList = scalesRes.data.items || [];
           setScales(scalesList);
 
-          // 批量获取状态
+          // Batch fetch status
           if (scalesList.length > 0) {
             const scaleIds = scalesList.map((s: Scale) => s.id);
             try {
@@ -107,42 +82,29 @@ export default function Dashboard() {
               if (!abortController.signal.aborted && isMounted && statusRes.success && statusRes.data) {
                 setStatusMap(statusRes.data);
               }
-            } catch (statusError: any) {
-              // 静默忽略状态获取错误（可能是取消导致）
+            } catch {
+              // Silently ignore status fetch errors
             }
           }
           if (!abortController.signal.aborted && isMounted) setStatusLoading(false);
         }
 
-        // 处理测评数据
+        // Process assessments data
         if (assessmentsRes.success && assessmentsRes.data) {
           const items = assessmentsRes.data.items || [];
           if (!abortController.signal.aborted && isMounted) {
             setAllAssessments(items);
-
-            const completed = items.filter((a: any) => a.status === 'completed').length;
-            const inProgress = items.filter((a: any) => a.status === 'in_progress').length;
-            const total = completed + inProgress;
-
-            const newStats = { total, completed, inProgress };
-            // 使用用户ID区分的 key 存储
-            if (user?.id) {
-              localStorage.setItem(`dashboard_stats_${user.id}`, JSON.stringify(newStats));
-            }
-            setDataLoaded(true);
           }
         }
 
-        // 处理分数统计
+        // Process score stats
         if (scoresRes.success && scoresRes.data && !abortController.signal.aborted && isMounted) {
           setScoreStats(scoresRes.data);
         }
       } catch (error: any) {
-        // 忽略取消的请求错误
         if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED' || abortController.signal.aborted) {
           return;
         }
-        // 只在组件仍然挂载时记录非取消错误
         if (isMounted) {
           console.error('Failed to load dashboard data:', error);
         }
@@ -162,236 +124,207 @@ export default function Dashboard() {
     };
   }, [initialized, isAuthenticated, user?.id]);
 
-  // 使用 useMemo 计算统计数据，避免重复计算
-  const stats = useMemo(() => {
-    const completed = allAssessments.filter((a: any) => a.status === 'completed').length;
-    const inProgress = allAssessments.filter((a: any) => a.status === 'in_progress').length;
-    return { total: completed + inProgress, completed, inProgress };
-  }, [allAssessments]);
+  // Calculate stats and recent assessments in single pass (O(n) instead of O(3n))
+  const { stats, recentAssessments } = useMemo(() => {
+    let completed = 0;
+    let inProgress = 0;
+    const recent: Array<{
+      id: string;
+      scale_id: string;
+      scale_name: string;
+      status: 'in_progress' | 'completed' | 'abandoned';
+      progress: number;
+      score?: number;
+      created_at: string;
+      completed_at: string | null;
+    }> = [];
 
-  // 使用 useMemo 获取最近测评（前5条）
-  const recentAssessments = useMemo(() => {
-    return allAssessments.slice(0, 5);
-  }, [allAssessments]);
+    for (let i = 0; i < allAssessments.length; i++) {
+      const a = allAssessments[i];
+      // Count stats
+      if (a.status === 'completed') completed++;
+      else if (a.status === 'in_progress') inProgress++;
 
-  // Calculate changes
-  const getTrendInfo = (current: number, previous: number) => {
-    if (previous === 0) return { change: 0, trend: 'neutral' as const };
-    const change = ((current - previous) / previous) * 100;
-    const trend = change > 0 ? 'up' : change < 0 ? 'down' : 'neutral';
-    return { change: Math.abs(change), trend };
+      // Build recent list (first 5 items)
+      if (recent.length < 5) {
+        recent.push({
+          id: a.id,
+          scale_id: a.scale_id,
+          scale_name: (a as any).scales?.name || '未命名测评',
+          status: a.status as 'in_progress' | 'completed' | 'abandoned',
+          progress: a.progress || 0,
+          score: a.raw_scores?.total_score,
+          created_at: a.started_at,
+          completed_at: a.completed_at,
+        });
+      }
+    }
+
+    return {
+      stats: { total: scales.length, completed, inProgress },
+      recentAssessments: recent,
+    };
+  }, [allAssessments, scales.length]);
+
+  // Transform status map for EnhancedScaleCard
+  const getScaleStatus = (scaleId: string) => {
+    const item = statusMap[scaleId];
+    if (!item) return undefined;
+    return {
+      status: item.status as 'in_progress' | 'completed' | 'abandoned' | null,
+      assessmentId: item.assessment_id,
+      progress: item.progress,
+    };
   };
 
   return (
-    <MainLayout>
-      <div className="max-w-7xl mx-auto px-4 space-y-8">
-        {/* Welcome Section */}
-        <Card>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-            欢迎回来，{user?.full_name || user?.username || '用户'}
-          </h1>
-          <p className="text-gray-600 dark:text-gray-400 mt-2">
-            开始您的心理健康评估之旅
-          </p>
-        </Card>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Floating Navigation */}
+      <FloatingNav transparentOnTop={true} />
 
-        {/* Stats */}
-        {loading ? (
-          <SkeletonGrid count={4} columns={4} />
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {/* Available Scales Card - 可参与测评数 */}
-            <Card variant="gradient" className="relative overflow-hidden border-2 border-primary-200 dark:border-primary-800">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-primary-200 to-primary-300 dark:from-primary-800 dark:to-primary-900 rounded-full -mr-16 -mt-16 opacity-30" />
-              <div className="relative flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300 mb-2">
-                    <ClipboardList size={20} />
-                    <span className="text-sm font-medium">可参与测评</span>
-                  </div>
-                  <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-                    {scales.length}
-                  </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">
-                    {scales.length > 0 ? '共有可参与的测评量表' : '暂无可用测评'}
-                  </div>
-                </div>
-                <div className="w-12 h-12 rounded-xl bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
-                  <ClipboardList className="text-primary-600 dark:text-primary-400" size={24} />
-                </div>
-              </div>
-            </Card>
+      {/* Hero Section */}
+      <HeroSection
+        user={user}
+        stats={stats}
+        avgScore={scoreStats?.avg_score ?? null}
+        isLoading={loading}
+      />
 
-            {/* Completed Card */}
-            <Card variant="gradient" className="relative overflow-hidden border-2 border-green-200 dark:border-green-800">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-green-100 dark:bg-green-900/20 rounded-full -mr-16 -mt-16 opacity-50" />
-              <div className="relative flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300 mb-2">
-                    <CheckCircle2 size={20} />
-                    <span className="text-sm font-medium">已完成</span>
-                  </div>
-                  <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-                    {stats.completed}
-                  </div>
-                  {dataLoaded && (() => {
-                    const trend = getTrendInfo(stats.completed, prevStats.completed);
-                    const completionRate = stats.total > 0 ? ((stats.completed / stats.total) * 100).toFixed(0) : 0;
-                    return (
-                      <div className="flex items-center gap-2">
-                        {stats.completed > 0 && trend.change > 0 && (
-                          <div className={`flex items-center gap-1 text-sm ${
-                            trend.trend === 'up' ? 'text-green-600 dark:text-green-400'
-                              : trend.trend === 'down' ? 'text-red-600 dark:text-red-400'
-                              : 'text-gray-600 dark:text-gray-400'
-                          }`}>
-                            {trend.trend === 'up' && <TrendingUp size={16} />}
-                            {trend.trend === 'down' && <TrendingDown size={16} />}
-                            {trend.trend === 'neutral' && <Minus size={16} />}
-                            <span className="font-medium">{trend.change.toFixed(1)}%</span>
-                          </div>
-                        )}
-                        {stats.total > 0 && (
-                          <span className="text-sm text-gray-500 dark:text-gray-400">
-                            完成率 {completionRate}%
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })()}
-                </div>
-                <div className="w-12 h-12 rounded-xl bg-green-100 dark:bg-green-900/30 flex items-center justify-center">
-                  <CheckCircle2 className="text-green-600 dark:text-green-400" size={24} />
-                </div>
-              </div>
-            </Card>
-
-            {/* Remaining Scales Card - 待完成测评 */}
-            <Card variant="gradient" className="relative overflow-hidden border-2 border-yellow-200 dark:border-yellow-800">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-100 dark:bg-yellow-900/20 rounded-full -mr-16 -mt-16 opacity-50" />
-              <div className="relative flex items-start justify-between">
-                <div>
-                  <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300 mb-2">
-                    <Clock size={20} />
-                    <span className="text-sm font-medium">待完成</span>
-                  </div>
-                  <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-                    {Math.max(0, scales.length - stats.completed)}
-                  </div>
-                  <div className="text-sm text-gray-500 dark:text-gray-400">
-                    {stats.inProgress > 0
-                      ? `${stats.inProgress} 个进行中`
-                      : scales.length - stats.completed > 0
-                        ? '尚未开始的测评'
-                        : '已完成全部测评'}
-                  </div>
-                </div>
-                <div className="w-12 h-12 rounded-xl bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center">
-                  <Clock className="text-yellow-600 dark:text-yellow-400" size={24} />
-                </div>
-              </div>
-            </Card>
-
-            {/* Average Score Card */}
-            <Card variant="gradient" className="relative overflow-hidden border-2 border-purple-200 dark:border-purple-800">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-purple-200 to-purple-300 dark:from-purple-800 dark:to-purple-900 rounded-full -mr-16 -mt-16 opacity-30" />
-              <div className="relative">
-                <Brain className="mx-auto text-purple-600 dark:text-purple-400 mb-3" size={32} />
-                <div className="text-4xl font-bold text-purple-600 dark:text-purple-400 mb-2 text-center">
-                  {scoreStats?.avg_score?.toFixed(2) || 'N/A'}
-                </div>
-                <div className="text-sm text-gray-600 dark:text-gray-400 text-center mb-2">平均分</div>
-                {scoreStats && scoreStats.avg_score && scoreStats.completed_count > 0 && (
-                  <div className="flex items-center justify-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                    <span>范围: {scoreStats.min_score?.toFixed(2)} - {scoreStats.max_score?.toFixed(2)}</span>
-                    {scoreStats.recent_trend && (
-                      <div className={`flex items-center gap-1 ${
-                        scoreStats.recent_trend === 'improving' ? 'text-green-600 dark:text-green-400'
-                          : scoreStats.recent_trend === 'declining' ? 'text-red-600 dark:text-red-400'
-                          : 'text-gray-500 dark:text-gray-400'
-                      }`}>
-                        {scoreStats.recent_trend === 'improving' && <TrendingDown size={14} />}
-                        {scoreStats.recent_trend === 'declining' && <TrendingUp size={14} />}
-                        {scoreStats.recent_trend === 'stable' && <Minus size={14} />}
-                      </div>
-                    )}
-                  </div>
-                )}
-                {scoreStats && scoreStats.completed_count === 0 && (
-                  <div className="text-xs text-gray-500 dark:text-gray-400 text-center">
-                    完成测评后显示
-                  </div>
-                )}
-              </div>
-            </Card>
-          </div>
-        )}
-
-        {/* Recent Assessments */}
-        <Card>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">最近测评</h2>
-          <div className="space-y-3">
+      {/* Main Content */}
+      <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 -mt-6">
+        {/* Timeline & Quick Actions Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
+          {/* Journey Timeline */}
+          <div className="lg:col-span-2">
             {loading ? (
-              <div className="space-y-3">
+              <div className="space-y-4">
+                <div className="h-6 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
                 {Array.from({ length: 3 }).map((_, i) => (
                   <SkeletonCard key={i} />
                 ))}
               </div>
-            ) : recentAssessments.length === 0 ? (
-              <EmptyState
-                icon={Activity}
-                title="还没有测评记录"
-                description="开始您的第一次测评，了解自己的心理健康状况"
-              />
             ) : (
-              recentAssessments.map((assessment: any) => (
-                <div
-                  key={assessment.id}
-                  className="flex items-center justify-between p-4 bg-gradient-to-r from-gray-50 to-gray-100/50 dark:from-gray-700/50 dark:to-gray-800/50 rounded-lg hover:shadow-md transition-all duration-200"
-                >
-                  <div>
-                    <h3 className="font-semibold text-gray-900 dark:text-white">
-                      {assessment.scales?.name || '未知量表'}
-                    </h3>
-                    <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {assessment.status === 'completed' ? '已完成' : '进行中'} • {new Date(assessment.started_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <Link to={`/reports/${assessment.id}`}>
-                    <Button size="sm" variant="gradient-primary">查看</Button>
-                  </Link>
-                </div>
-              ))
+              <JourneyTimeline assessments={recentAssessments} />
             )}
           </div>
-        </Card>
 
-        {/* Available Scales */}
-        <Card>
-          <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">开始新测评</h2>
-          {loading ? (
-            <SkeletonGrid count={4} columns={4} />
-          ) : scales.length === 0 ? (
-            <EmptyState
-              icon={ClipboardList}
-              title="暂无可用量表"
-              description="当前没有激活的测评量表"
-            />
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {scales.map((scale) => (
-                <div key={scale.id} className="transition-all duration-200 hover:-translate-y-1">
-                  <ScaleCard
-                    scale={scale}
-                    status={statusMap[scale.id]}
-                    statusLoading={statusLoading}
-                  />
+          {/* Quick Action Card */}
+          <div className="lg:col-span-1">
+            <div className="sticky top-6">
+              <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
+                <div className="w-6 h-6 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
+                  <Zap className="w-3.5 h-3.5 text-white" />
                 </div>
+                快速开始
+              </h3>
+              <Link
+                to="/scales"
+                className="group block p-6 rounded-2xl bg-gradient-to-br from-primary-500 to-secondary-600 dark:from-primary-600 dark:to-secondary-700 shadow-xl hover:shadow-2xl hover:scale-[1.02] transition-all duration-300"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className="w-14 h-14 rounded-xl bg-white/20 backdrop-blur-sm flex items-center justify-center">
+                    <Sparkles className="w-7 h-7 text-white" />
+                  </div>
+                  <ArrowRight className="w-6 h-6 text-white/70 group-hover:text-white group-hover:translate-x-1 transition-all" />
+                </div>
+                <h4 className="text-xl font-bold text-white mb-2">
+                  开始新测评
+                </h4>
+                <p className="text-white/80 text-sm">
+                  探索更多心理测评量表，了解自己的内心世界
+                </p>
+                <div className="mt-4 pt-4 border-t border-white/20">
+                  <span className="text-white/90 text-sm font-medium">
+                    {scales.length} 个量表可用
+                  </span>
+                </div>
+              </Link>
+
+              {/* Additional Quick Stats */}
+              {stats.inProgress > 0 && (
+                <div className="mt-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
+                      <PenLine className="w-5 h-5 text-white" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                        {stats.inProgress} 个测评进行中
+                      </p>
+                      <p className="text-xs text-amber-600 dark:text-amber-400">
+                        点击上方卡片继续完成
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Explore Scales Section */}
+        <div className="mb-12">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+              <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-primary-400 to-secondary-500 flex items-center justify-center">
+                <Compass className="w-5 h-5 text-white" />
+              </div>
+              探索测评
+            </h2>
+            <Link
+              to="/scales"
+              className="flex items-center gap-1 text-sm font-medium text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
+            >
+              查看全部
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+
+          {loading || statusLoading ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
+          ) : scales.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 px-4 rounded-2xl bg-white/60 dark:bg-white/[0.04] backdrop-blur-sm border border-gray-200/50 dark:border-white/[0.06]">
+              <div className="w-20 h-20 rounded-full bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-800 dark:to-gray-700 flex items-center justify-center mb-4">
+                <ClipboardList className="w-10 h-10 text-gray-400 dark:text-gray-500" />
+              </div>
+              <p className="text-gray-600 dark:text-gray-400 text-center">
+                暂无可用的测评量表
+              </p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">
+                请稍后再来查看
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
+              {scales.slice(0, 8).map((scale, index) => (
+                <EnhancedScaleCard
+                  key={scale.id}
+                  scale={scale}
+                  status={getScaleStatus(scale.id)}
+                  index={index}
+                />
               ))}
             </div>
           )}
-        </Card>
+
+          {/* Show more button if more than 8 scales */}
+          {scales.length > 8 && (
+            <div className="flex justify-center mt-8">
+              <Link
+                to="/scales"
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-750 hover:border-primary-300 dark:hover:border-primary-600 transition-all shadow-sm hover:shadow"
+              >
+                查看更多量表
+                <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          )}
+        </div>
       </div>
-    </MainLayout>
+    </div>
   );
 }

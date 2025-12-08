@@ -25,16 +25,34 @@ export default defineConfig({
         manualChunks: {
           // React 核心库
           'vendor-react': ['react', 'react-dom', 'react-router-dom'],
-          // 图表库（较大）
+          // 图表库（较大，仅报告页面使用）
           'vendor-charts': ['recharts'],
           // 动画库
           'vendor-animation': ['framer-motion'],
           // 工具库
           'vendor-utils': ['axios', 'zustand', 'date-fns'],
+          // Supabase 客户端（较大的认证库）
+          'vendor-supabase': ['@supabase/supabase-js'],
+          // Markdown 渲染（仅报告页面使用）
+          'vendor-markdown': ['react-markdown'],
+          // UI 组件库
+          'vendor-ui': ['lucide-react', 'react-hot-toast', 'canvas-confetti'],
         },
       },
     },
     // 减少 chunk 大小警告阈值
     chunkSizeWarningLimit: 600,
+    // 生产构建优化
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true, // 生产环境移除 console.log
+        drop_debugger: true,
+      },
+    },
+    // 启用 CSS 代码分割
+    cssCodeSplit: true,
+    // 启用 source map（可选，调试用）
+    sourcemap: false,
   },
 })

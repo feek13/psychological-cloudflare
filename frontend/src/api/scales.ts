@@ -4,6 +4,8 @@
  */
 
 import supabase, { getCurrentUser, getUserProfile } from './supabase';
+import { formatResponse } from './utils';
+import type { APIResponse } from '@/types';
 import type {
   Scale,
   ScaleWithQuestions,
@@ -12,29 +14,6 @@ import type {
   ScaleUpdate,
   Question,
 } from '@/types/scale';
-
-// Generic API response type
-interface APIResponse<T = unknown> {
-  success: boolean;
-  message?: string;
-  data: T;
-}
-
-// Helper to format API response
-function formatResponse<T>(data: T | null, error: Error | null, message?: string): APIResponse<T> {
-  if (error) {
-    return {
-      success: false,
-      message: error.message,
-      data: undefined as unknown as T,
-    };
-  }
-  return {
-    success: true,
-    message: message || 'Success',
-    data: data as T,
-  };
-}
 
 export const scalesAPI = {
   /**
@@ -95,9 +74,12 @@ export const scalesAPI = {
         .from('scales')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
+      if (!data) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
       return formatResponse(data as Scale, null);
     } catch (error) {
       console.error('Get scale error:', error);
@@ -115,9 +97,12 @@ export const scalesAPI = {
         .from('scales')
         .select('*')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (scaleError) throw scaleError;
+      if (!scale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       // Get questions
       const { data: questions, error: questionsError } = await supabase
@@ -309,9 +294,12 @@ export const scalesAPI = {
         .from('scales')
         .select('created_by')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
+      if (!existingScale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       const profile = await getUserProfile(user.id);
       if (existingScale.created_by !== user.id && profile.role !== 'admin') {
@@ -351,9 +339,12 @@ export const scalesAPI = {
         .from('scales')
         .select('created_by')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (fetchError) throw fetchError;
+      if (!existingScale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       const profile = await getUserProfile(user.id);
       if (existingScale.created_by !== user.id && profile.role !== 'admin') {
@@ -488,9 +479,12 @@ export const scalesAPI = {
         .from('scales')
         .select('id, name, code')
         .eq('id', id)
-        .single();
+        .maybeSingle();
 
       if (scaleError) throw scaleError;
+      if (!scale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       // Get assessments for this scale
       const { data: assessments, error: assessmentsError } = await supabase
@@ -566,9 +560,12 @@ export const scalesAPI = {
         .from('scales')
         .select('created_by')
         .eq('id', scaleId)
-        .single();
+        .maybeSingle();
 
       if (scaleError) throw scaleError;
+      if (!scale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       const profile = await getUserProfile(user.id);
       if (scale.created_by !== user.id && profile.role !== 'admin') {
@@ -637,18 +634,24 @@ export const scalesAPI = {
         .from('questions')
         .select('scale_id')
         .eq('id', questionId)
-        .single();
+        .maybeSingle();
 
       if (questionError) throw questionError;
+      if (!question) {
+        return formatResponse(null, new Error('题目不存在'));
+      }
 
       // Verify ownership
       const { data: scale, error: scaleError } = await supabase
         .from('scales')
         .select('created_by')
         .eq('id', question.scale_id)
-        .single();
+        .maybeSingle();
 
       if (scaleError) throw scaleError;
+      if (!scale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       const profile = await getUserProfile(user.id);
       if (scale.created_by !== user.id && profile.role !== 'admin') {
@@ -660,9 +663,12 @@ export const scalesAPI = {
         .update(data)
         .eq('id', questionId)
         .select()
-        .single();
+        .maybeSingle();
 
       if (error) throw error;
+      if (!updated) {
+        return formatResponse(null, new Error('更新失败'));
+      }
       return formatResponse(updated as Question, null, '题目更新成功');
     } catch (error) {
       console.error('Update question error:', error);
@@ -685,18 +691,24 @@ export const scalesAPI = {
         .from('questions')
         .select('scale_id')
         .eq('id', questionId)
-        .single();
+        .maybeSingle();
 
       if (questionError) throw questionError;
+      if (!question) {
+        return formatResponse(null, new Error('题目不存在'));
+      }
 
       // Verify ownership
       const { data: scale, error: scaleError } = await supabase
         .from('scales')
         .select('created_by')
         .eq('id', question.scale_id)
-        .single();
+        .maybeSingle();
 
       if (scaleError) throw scaleError;
+      if (!scale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       const profile = await getUserProfile(user.id);
       if (scale.created_by !== user.id && profile.role !== 'admin') {

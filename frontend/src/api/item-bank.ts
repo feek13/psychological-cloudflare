@@ -6,6 +6,7 @@
  */
 
 import supabase, { getCurrentUser, getUserProfile } from './supabase';
+import { formatSuccess as formatResponse } from './utils';
 import type { APIResponse } from '@/types';
 import type {
   ItemBankResponse,
@@ -33,12 +34,6 @@ import type {
   ItemBankBatchResponse,
   ItemRevision,
 } from '@/types/item-bank';
-
-// Helper to format response
-const formatResponse = <T>(data: T): APIResponse<T> => ({
-  success: true,
-  data
-});
 
 export const itemBankAPI = {
   // ==================== Item CRUD Operations ====================
@@ -105,7 +100,7 @@ export const itemBankAPI = {
       .from('item_bank')
       .select('*')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     if (!item) throw new Error('Item not found');
@@ -186,7 +181,7 @@ export const itemBankAPI = {
       .from('item_bank')
       .select('created_by, status')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (fetchError) throw fetchError;
     if (!existing) throw new Error('Item not found');
@@ -247,7 +242,7 @@ export const itemBankAPI = {
       .from('item_bank')
       .select('created_by')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (fetchError) throw fetchError;
     if (!existing) throw new Error('Item not found');
@@ -353,7 +348,7 @@ export const itemBankAPI = {
       .from('item_collections')
       .select('*')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error) throw error;
     if (!collection) throw new Error('Collection not found');

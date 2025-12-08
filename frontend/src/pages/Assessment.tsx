@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
@@ -16,6 +16,7 @@ import { ChevronLeft, ChevronRight, CheckCircle, AlertCircle, Keyboard } from 'l
 
 export default function AssessmentPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useState(() => new URLSearchParams(window.location.search));
   const navigate = useNavigate();
 
   const [assessment, setAssessment] = useState<Assessment | null>(null);
@@ -31,8 +32,19 @@ export default function AssessmentPage() {
 
     const loadAssessment = async () => {
       try {
-        // First, load the assessment
-        const assessmentRes = await assessmentsAPI.get(id);
+        // Check if we have a continue parameter (assessment_id)
+        const continueAssessmentId = searchParams.get('continue');
+
+        let assessmentRes;
+
+        if (continueAssessmentId) {
+          // URL has ?continue=assessmentId, load that assessment directly
+          assessmentRes = await assessmentsAPI.get(continueAssessmentId);
+        } else {
+          // URL only has scale_id, need to create or get existing assessment
+          // First try to create (will return existing if one exists)
+          assessmentRes = await assessmentsAPI.create(id);
+        }
 
         if (!assessmentRes.success) {
           toast.error(assessmentRes.message || '测评不存在');
@@ -47,7 +59,7 @@ export default function AssessmentPage() {
         // Check if assessment is already completed
         if (assessmentRes.data.status === 'completed') {
           toast.error('该测评已完成');
-          navigate(`/reports/${id}`);
+          navigate(`/reports/${assessmentRes.data.id}`);
           return;
         }
 
@@ -70,7 +82,7 @@ export default function AssessmentPage() {
     };
 
     loadAssessment();
-  }, [id, navigate]);
+  }, [id, navigate, searchParams]);
 
   // Derived state - must be declared before useEffect that uses them
   const currentQuestion = questions[currentIndex];
@@ -138,7 +150,8 @@ export default function AssessmentPage() {
     // Save answer to backend
     setIsSubmittingAnswer(true);
     try {
-      await assessmentsAPI.submitAnswer(id, currentQuestion.id, optionValue);
+      // Use assessment.id (not scale_id from URL) for the API call
+      await assessmentsAPI.submitAnswer(assessment!.id, currentQuestion.id, optionValue);
     } catch (error: any) {
       // Check if error is due to completed assessment
       if (error?.response?.data?.detail?.includes('进行中')) {
@@ -171,7 +184,7 @@ export default function AssessmentPage() {
   };
 
   const handleSubmit = async () => {
-    if (!id) return;
+    if (!assessment) return;
 
     // Check if all questions are answered
     if (answeredCount < totalQuestions) {
@@ -181,7 +194,8 @@ export default function AssessmentPage() {
 
     setSubmitting(true);
     try {
-      const res = await assessmentsAPI.submit(id, answers);
+      // Use assessment.id (not scale_id from URL) for the API call
+      const res = await assessmentsAPI.submit(assessment.id, answers);
       if (res.success) {
         // Trigger confetti animation
         confetti({
@@ -206,7 +220,7 @@ export default function AssessmentPage() {
 
         toast.success('测评提交成功！正在生成报告...');
         setTimeout(() => {
-          navigate(`/reports/${id}`);
+          navigate(`/reports/${assessment.id}`);
         }, 1000);
       } else {
         toast.error(res.message || '提交失败');
@@ -217,6 +231,44 @@ export default function AssessmentPage() {
       setSubmitting(false);
     }
   };
+
+  // Memoized navigation data - avoid recalculating on every render (O(n) -> O(1) per render)
+  const navigationData = useMemo(() => {
+    if (questions.length === 0) {
+      return { startIdx: 0, endIdx: 0, firstUnansweredIdx: -1, windowSize: 7, visibleIndices: [] };
+    }
+
+    const windowSize = 7;
+    const halfWindow = Math.floor(windowSize / 2);
+    let startIdx = Math.max(0, currentIndex - halfWindow);
+    let endIdx = Math.min(totalQuestions - 1, startIdx + windowSize - 1);
+
+    // Adjust start position to ensure full window
+    if (endIdx - startIdx < windowSize - 1) {
+      startIdx = Math.max(0, endIdx - windowSize + 1);
+    }
+
+    // Find first unanswered question (single pass)
+    let firstUnansweredIdx = -1;
+    for (let i = 0; i < questions.length; i++) {
+      if (answers[questions[i].id] === undefined) {
+        firstUnansweredIdx = i;
+        break;
+      }
+    }
+
+    // Pre-compute visible indices with their answered status
+    const visibleIndices = [];
+    for (let i = startIdx; i <= endIdx; i++) {
+      visibleIndices.push({
+        idx: i,
+        isAnswered: answers[questions[i].id] !== undefined,
+        isCurrent: i === currentIndex,
+      });
+    }
+
+    return { startIdx, endIdx, firstUnansweredIdx, windowSize, visibleIndices };
+  }, [questions, currentIndex, totalQuestions, answers]);
 
   if (loading) {
     return (
@@ -435,109 +487,80 @@ export default function AssessmentPage() {
             上一题
           </Button>
 
-          {/* Smart Progress Navigator - 智能进度导航 */}
+          {/* Smart Progress Navigator - 智能进度导航 (memoized for performance) */}
           <div className="flex-1 max-w-md mx-4">
-            {(() => {
-              // 计算可见窗口范围
-              const windowSize = 7; // 显示7个点
-              const halfWindow = Math.floor(windowSize / 2);
-              let startIdx = Math.max(0, currentIndex - halfWindow);
-              let endIdx = Math.min(totalQuestions - 1, startIdx + windowSize - 1);
+            <div className="flex items-center justify-center gap-2">
+              {/* 跳转到开头 */}
+              {navigationData.startIdx > 0 && (
+                <motion.button
+                  onClick={() => setCurrentIndex(0)}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 bg-gray-100 dark:bg-gray-800 rounded-full transition-colors"
+                  title="跳转到第1题"
+                >
+                  <span>1</span>
+                  <span className="text-gray-400">...</span>
+                </motion.button>
+              )}
 
-              // 调整起始位置确保显示完整窗口
-              if (endIdx - startIdx < windowSize - 1) {
-                startIdx = Math.max(0, endIdx - windowSize + 1);
-              }
+              {/* 可见窗口内的题目点 */}
+              <div className="flex items-center gap-1.5">
+                {navigationData.visibleIndices.map((item, i) => (
+                  <motion.button
+                    key={item.idx}
+                    onClick={() => setCurrentIndex(item.idx)}
+                    whileHover={{ scale: 1.3, y: -2 }}
+                    whileTap={{ scale: 0.9 }}
+                    initial={{ opacity: 0, scale: 0 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ delay: i * 0.02 }}
+                    className={`relative transition-all duration-200 ${
+                      item.isCurrent
+                        ? 'w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg shadow-primary-500/30'
+                        : item.isAnswered
+                        ? 'w-3 h-3 rounded-full bg-primary-400 dark:bg-primary-600'
+                        : 'w-3 h-3 rounded-full bg-red-400 dark:bg-red-500 ring-2 ring-red-200 dark:ring-red-800/50 animate-pulse'
+                    }`}
+                    title={`第 ${item.idx + 1} 题${item.isAnswered ? '（已作答）' : '（未作答）'}`}
+                  >
+                    {item.isCurrent && (
+                      <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">
+                        {item.idx + 1}
+                      </span>
+                    )}
+                  </motion.button>
+                ))}
+              </div>
 
-              // 找到下一个未答题的索引
-              const nextUnansweredIdx = questions.findIndex((q, idx) =>
-                idx > currentIndex && answers[q.id] === undefined
-              );
+              {/* 跳转到结尾 */}
+              {navigationData.endIdx < totalQuestions - 1 && (
+                <motion.button
+                  onClick={() => setCurrentIndex(totalQuestions - 1)}
+                  whileHover={{ scale: 1.1 }}
+                  whileTap={{ scale: 0.9 }}
+                  className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 bg-gray-100 dark:bg-gray-800 rounded-full transition-colors"
+                  title={`跳转到第${totalQuestions}题`}
+                >
+                  <span className="text-gray-400">...</span>
+                  <span>{totalQuestions}</span>
+                </motion.button>
+              )}
 
-              // 找到第一个未答题
-              const firstUnansweredIdx = questions.findIndex(q => answers[q.id] === undefined);
-
-              return (
-                <div className="flex items-center justify-center gap-2">
-                  {/* 跳转到开头 */}
-                  {startIdx > 0 && (
-                    <motion.button
-                      onClick={() => setCurrentIndex(0)}
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 bg-gray-100 dark:bg-gray-800 rounded-full transition-colors"
-                      title="跳转到第1题"
-                    >
-                      <span>1</span>
-                      <span className="text-gray-400">...</span>
-                    </motion.button>
-                  )}
-
-                  {/* 可见窗口内的题目点 */}
-                  <div className="flex items-center gap-1.5">
-                    {Array.from({ length: endIdx - startIdx + 1 }, (_, i) => {
-                      const idx = startIdx + i;
-                      const isAnswered = answers[questions[idx].id] !== undefined;
-                      const isCurrent = idx === currentIndex;
-
-                      return (
-                        <motion.button
-                          key={idx}
-                          onClick={() => setCurrentIndex(idx)}
-                          whileHover={{ scale: 1.3, y: -2 }}
-                          whileTap={{ scale: 0.9 }}
-                          initial={{ opacity: 0, scale: 0 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          transition={{ delay: i * 0.02 }}
-                          className={`relative transition-all duration-200 ${
-                            isCurrent
-                              ? 'w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-600 shadow-lg shadow-primary-500/30'
-                              : isAnswered
-                              ? 'w-3 h-3 rounded-full bg-primary-400 dark:bg-primary-600'
-                              : 'w-3 h-3 rounded-full bg-red-400 dark:bg-red-500 ring-2 ring-red-200 dark:ring-red-800/50 animate-pulse'
-                          }`}
-                          title={`第 ${idx + 1} 题${isAnswered ? '（已作答）' : '（未作答）'}`}
-                        >
-                          {isCurrent && (
-                            <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">
-                              {idx + 1}
-                            </span>
-                          )}
-                        </motion.button>
-                      );
-                    })}
-                  </div>
-
-                  {/* 跳转到结尾 */}
-                  {endIdx < totalQuestions - 1 && (
-                    <motion.button
-                      onClick={() => setCurrentIndex(totalQuestions - 1)}
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
-                      className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 bg-gray-100 dark:bg-gray-800 rounded-full transition-colors"
-                      title={`跳转到第${totalQuestions}题`}
-                    >
-                      <span className="text-gray-400">...</span>
-                      <span>{totalQuestions}</span>
-                    </motion.button>
-                  )}
-
-                  {/* 快速跳转到下一个未答题 */}
-                  {firstUnansweredIdx !== -1 && firstUnansweredIdx !== currentIndex && (
-                    <motion.button
-                      onClick={() => setCurrentIndex(firstUnansweredIdx)}
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                      className="ml-2 flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 rounded-full transition-colors border border-amber-200 dark:border-amber-800"
-                      title={`跳转到第${firstUnansweredIdx + 1}题（未作答）`}
-                    >
-                      <AlertCircle size={12} />
-                      <span>第{firstUnansweredIdx + 1}题</span>
-                    </motion.button>
-                  )}
-                </div>
-              );
-            })()}
+              {/* 快速跳转到下一个未答题 */}
+              {navigationData.firstUnansweredIdx !== -1 && navigationData.firstUnansweredIdx !== currentIndex && (
+                <motion.button
+                  onClick={() => setCurrentIndex(navigationData.firstUnansweredIdx)}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  className="ml-2 flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 rounded-full transition-colors border border-amber-200 dark:border-amber-800"
+                  title={`跳转到第${navigationData.firstUnansweredIdx + 1}题（未作答）`}
+                >
+                  <AlertCircle size={12} />
+                  <span>第{navigationData.firstUnansweredIdx + 1}题</span>
+                </motion.button>
+              )}
+            </div>
           </div>
 
           {currentIndex === totalQuestions - 1 ? (
