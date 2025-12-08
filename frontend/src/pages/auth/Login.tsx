@@ -100,7 +100,7 @@ export default function Login() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="student@test.com"
+                placeholder="test@demo.com"
                 icon={<Mail size={18} />}
                 required
               />
@@ -167,11 +167,11 @@ export default function Login() {
                 <div className="space-y-1">
                   <p className="flex items-center gap-2">
                     <Mail size={12} className="text-blue-500" />
-                    <span>student@test.com</span>
+                    <span>test@demo.com</span>
                   </p>
                   <p className="flex items-center gap-2">
                     <Lock size={12} className="text-blue-500" />
-                    <span>TestStudent123</span>
+                    <span>Test123456</span>
                   </p>
                 </div>
               </div>

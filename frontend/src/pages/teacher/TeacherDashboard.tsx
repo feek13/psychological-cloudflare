@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import TeacherLayout from '@/components/layout/TeacherLayout';
 import { teachersAPI, studentsAPI } from '@/api';
 import type { StudentStatistics, GradeStatistics } from '@/types';
-import type { GradeLabel } from '@/types/teachers';
-import { GRADE_LABELS } from '@/types/teachers';
+import type { TeacherPermissionDetail } from '@/types/teachers';
 import toast from 'react-hot-toast';
 import {
   UsersIcon,
@@ -17,7 +16,7 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 
 export default function TeacherDashboard() {
   const [loading, setLoading] = useState(true);
-  const [myGrades, setMyGrades] = useState<GradeLabel[]>([]);
+  const [myPermissions, setMyPermissions] = useState<TeacherPermissionDetail[]>([]);
   const [statistics, setStatistics] = useState<StudentStatistics | null>(null);
   const [gradeStats, setGradeStats] = useState<GradeStatistics[]>([]);
 
@@ -28,14 +27,14 @@ export default function TeacherDashboard() {
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      const [gradesRes, statsRes, gradeStatsRes] = await Promise.all([
-        teachersAPI.getMyGrades(),
+      const [permissionsRes, statsRes, gradeStatsRes] = await Promise.all([
+        teachersAPI.getMyPermissions(),
         studentsAPI.getOverview(),
         studentsAPI.getGradeStatistics(),
       ]);
 
-      if (gradesRes.success) {
-        setMyGrades(gradesRes.data as GradeLabel[]);
+      if (permissionsRes.success) {
+        setMyPermissions(permissionsRes.data);
       }
 
       if (statsRes.success) {
@@ -53,7 +52,36 @@ export default function TeacherDashboard() {
     }
   };
 
-  // Use imported GRADE_LABELS from types
+  // Helper to format permission display
+  const formatPermission = (perm: TeacherPermissionDetail): string => {
+    switch (perm.permission_level) {
+      case 'school':
+        return '全校权限';
+      case 'college':
+        return `学院级：${perm.college_name || '未知学院'}`;
+      case 'major':
+        return `专业级：${perm.major_name || '未知专业'}`;
+      case 'class':
+        return `班级级：${perm.class_name || '未知班级'}`;
+      default:
+        return '未知权限';
+    }
+  };
+
+  const getPermissionColor = (level: string): string => {
+    switch (level) {
+      case 'school':
+        return 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300';
+      case 'college':
+        return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300';
+      case 'major':
+        return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+      case 'class':
+        return 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300';
+      default:
+        return 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300';
+    }
+  };
 
   if (loading) {
     return (
@@ -73,12 +101,23 @@ export default function TeacherDashboard() {
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
             欢迎，教师！
           </h2>
-          <p className="text-gray-600 dark:text-gray-400">
-            您当前负责的年级：
-            {myGrades.length > 0
-              ? myGrades.map((g) => GRADE_LABELS[g as GradeLabel]).join('、')
-              : '暂未分配年级'}
-          </p>
+          <div className="text-gray-600 dark:text-gray-400">
+            <span>您当前负责的范围：</span>
+            {myPermissions.length > 0 ? (
+              <div className="mt-2 flex flex-wrap gap-2">
+                {myPermissions.map((perm) => (
+                  <span
+                    key={perm.id}
+                    className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${getPermissionColor(perm.permission_level)}`}
+                  >
+                    {formatPermission(perm)}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <span className="text-amber-600 dark:text-amber-400 ml-1">暂无权限，请联系管理员分配</span>
+            )}
+          </div>
         </div>
 
         {/* Statistics Cards */}
@@ -88,7 +127,7 @@ export default function TeacherDashboard() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">学生总数</p>
                 <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
-                  {statistics?.total_students || 0}
+                  {statistics?.total_students ?? 0}
                 </p>
               </div>
               <div className="p-3 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
@@ -100,9 +139,9 @@ export default function TeacherDashboard() {
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600 dark:text-gray-400">负责年级</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">权限数量</p>
                 <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
-                  {myGrades.length}
+                  {myPermissions.length}
                 </p>
               </div>
               <div className="p-3 bg-green-100 dark:bg-green-900/30 rounded-lg">
@@ -116,7 +155,7 @@ export default function TeacherDashboard() {
               <div>
                 <p className="text-sm text-gray-600 dark:text-gray-400">班级总数</p>
                 <p className="text-3xl font-bold text-gray-900 dark:text-white mt-2">
-                  {statistics?.by_class ? Object.keys(statistics.by_class).length : 0}
+                  {statistics?.class_count ?? 0}
                 </p>
               </div>
               <div className="p-3 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
@@ -141,7 +180,7 @@ export default function TeacherDashboard() {
                   <YAxis />
                   <Tooltip />
                   <Legend />
-                  <Bar dataKey="avg_completion_rate" fill="#10b981" name="完成率 (%)" />
+                  <Bar dataKey="completion_rate" fill="#10b981" name="完成率 (%)" />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -214,7 +253,7 @@ export default function TeacherDashboard() {
                         {stat.completed_assessments}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                        {stat.avg_completion_rate.toFixed(1)}%
+                        {stat.completion_rate.toFixed(1)}%
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                         {stat.avg_score !== null && stat.avg_score !== undefined ? (
@@ -236,30 +275,6 @@ export default function TeacherDashboard() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          </div>
-        )}
-
-        {/* By Grade Statistics */}
-        {statistics && statistics.by_grade && Object.keys(statistics.by_grade).length > 0 && (
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-              各年级学生分布
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {Object.entries(statistics.by_grade).map(([grade, stats]) => (
-                <div
-                  key={grade}
-                  className="p-4 bg-gray-50 dark:bg-gray-700 rounded-lg text-center"
-                >
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                    {GRADE_LABELS[grade as GradeLabel] || grade}
-                  </p>
-                  <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
-                    {stats.total_students ?? stats.student_count}
-                  </p>
-                </div>
-              ))}
             </div>
           </div>
         )}

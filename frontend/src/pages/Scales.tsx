@@ -2,6 +2,7 @@ import { useEffect, useState, memo } from 'react';
 import { Link } from 'react-router-dom';
 import { scalesAPI } from '@/api/scales';
 import { assessmentsAPI } from '@/api/assessments';
+import { authStore } from '@/store/authStore';
 import MainLayout from '@/components/layout/MainLayout';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -179,9 +180,16 @@ export default function Scales() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
 
+  // Subscribe to auth store initialization state
+  const initialized = authStore((state) => state.initialized);
+  const isAuthenticated = authStore((state) => state.isAuthenticated);
+
   useEffect(() => {
-    loadData();
-  }, []);
+    // Wait for auth to be initialized and user to be authenticated
+    if (initialized && isAuthenticated) {
+      loadData();
+    }
+  }, [initialized, isAuthenticated]);
 
   const loadData = async () => {
     try {

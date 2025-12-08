@@ -1,6 +1,7 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { assessmentsAPI } from '@/api/assessments';
+import { authStore } from '@/store/authStore';
 import MainLayout from '@/components/layout/MainLayout';
 import Card from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -13,28 +14,50 @@ import { FileText, Calendar, TrendingUp, History as HistoryIcon, BarChart3, Zap 
 export default function History() {
   const [assessments, setAssessments] = useState<Assessment[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
 
-  useEffect(() => {
-    loadAssessments();
+  // Subscribe to auth store initialization state
+  const initialized = authStore((state) => state.initialized);
+  const isAuthenticated = authStore((state) => state.isAuthenticated);
+  const userId = authStore((state) => state.user?.id);
+
+  const loadAssessments = useCallback(async () => {
+    setLoading(true);
+    setError(false);
+    try {
+      const res = await assessmentsAPI.list({ limit: 100 });
+
+      if (res.success) {
+        setAssessments(res.data.items);
+        setHasLoaded(true);
+      } else {
+        setError(true);
+        toast.error('获取历史记录失败');
+      }
+    } catch {
+      setError(true);
+      toast.error('获取历史记录失败');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const loadAssessments = () => {
-    assessmentsAPI
-      .list({ limit: 100 })
-      .then((res) => {
-        if (res.success) {
-          setAssessments(res.data.items);
-        } else {
-          toast.error('获取历史记录失败');
-        }
-      })
-      .catch(() => {
-        toast.error('获取历史记录失败');
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  };
+  // 当用户ID变化时（切换账户），重置状态并重新加载
+  useEffect(() => {
+    if (userId) {
+      setHasLoaded(false);
+      setAssessments([]);
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    // Wait for auth store to be initialized and user to be authenticated
+    // Only load once when conditions are met
+    if (initialized && isAuthenticated && userId && !hasLoaded) {
+      loadAssessments();
+    }
+  }, [initialized, isAuthenticated, userId, hasLoaded, loadAssessments]);
 
   const getStatusBadge = (status: string) => {
     const statusMap = {
@@ -55,6 +78,13 @@ export default function History() {
     return severityMap[severity as keyof typeof severityMap];
   };
 
+  // useMemo 必须在所有条件 return 之前调用（React Hooks 规则）
+  const computedStats = useMemo(() => ({
+    total: assessments.length,
+    completed: assessments.filter(a => a.status === 'completed').length,
+    inProgress: assessments.filter(a => a.status === 'in_progress').length,
+  }), [assessments]);
+
   if (loading) {
     return (
       <MainLayout>
@@ -64,13 +94,6 @@ export default function History() {
       </MainLayout>
     );
   }
-
-  // useMemo 缓存统计数据
-  const computedStats = useMemo(() => ({
-    total: assessments.length,
-    completed: assessments.filter(a => a.status === 'completed').length,
-    inProgress: assessments.filter(a => a.status === 'in_progress').length,
-  }), [assessments]);
 
   return (
     <MainLayout>

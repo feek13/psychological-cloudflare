@@ -28,6 +28,12 @@ const formatResponse = <T>(data: T): APIResponse<T> => ({
  * 根据教师权限构建查询过滤条件
  */
 const buildPermissionFilter = async (userId: string) => {
+  // Check user role first - admin has all permissions
+  const profile = await getUserProfile();
+  if (profile?.role === 'admin') {
+    return { hasAccess: true, filter: null }; // Admin can see all students
+  }
+
   // Get teacher's permissions
   const { data: permissions, error } = await supabase
     .from('teacher_permissions')
@@ -132,10 +138,13 @@ export const studentsAPI = {
     // Enrich with organization names
     const enrichedStudents = await enrichStudentsWithOrgNames(students || []);
 
+    // RLS policies now allow teachers/admins to read assessments directly
+    const assessmentClient = supabase;
+
     // Calculate average score for each student
     const studentsWithScores = await Promise.all(
       enrichedStudents.map(async (student) => {
-        const { data: assessments } = await supabase
+        const { data: assessments } = await assessmentClient
           .from('assessments')
           .select('raw_scores')
           .eq('user_id', student.id)
@@ -144,8 +153,8 @@ export const studentsAPI = {
         let avgScore: number | null = null;
         if (assessments && assessments.length > 0) {
           const scores = assessments
-            .filter(a => a.raw_scores?.total !== undefined)
-            .map(a => a.raw_scores.total);
+            .filter(a => a.raw_scores?.total_score !== undefined || a.raw_scores?.final_score !== undefined)
+            .map(a => a.raw_scores.total_score ?? a.raw_scores.final_score);
           if (scores.length > 0) {
             avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
           }
@@ -206,8 +215,11 @@ export const studentsAPI = {
     const user = await getCurrentUser();
     if (!user) throw new Error('Not authenticated');
 
+    // RLS policies now allow teachers/admins to read assessments directly
+    const client = supabase;
+
     // Get teacher's published scales
-    const { data: publications } = await supabase
+    const { data: publications } = await client
       .from('scale_publications')
       .select('scale_id')
       .eq('published_by', user.id)
@@ -220,7 +232,7 @@ export const studentsAPI = {
     }
 
     // Get completed assessments for those scales
-    const { data: assessments, error } = await supabase
+    const { data: assessments, error } = await client
       .from('assessments')
       .select('*')
       .eq('user_id', studentId)
@@ -269,14 +281,19 @@ export const studentsAPI = {
         total_assessments: 0,
         completed_assessments: 0,
         in_progress_assessments: 0,
-        completion_rate: 0
+        completion_rate: 0,
+        class_count: 0
       });
     }
 
+    // RLS policies now allow teachers/admins to read assessments directly
+    // No need for admin client - use regular supabase client
+    const client = supabase;
+
     // Build student query based on permissions
-    let studentQuery = supabase
+    let studentQuery = client
       .from('profiles')
-      .select('id', { count: 'exact' })
+      .select('id, class_id', { count: 'exact' })
       .eq('role', 'student');
 
     if (filter) {
@@ -289,10 +306,16 @@ export const studentsAPI = {
       }
     }
 
-    const { count: totalStudents } = await studentQuery;
+    const { count: totalStudents, data: studentProfiles } = await studentQuery;
 
-    // Get student IDs for assessment queries
-    const { data: studentProfiles } = await studentQuery;
+    // Count unique classes
+    const uniqueClassIds = new Set(
+      (studentProfiles || [])
+        .map(s => s.class_id)
+        .filter(Boolean)
+    );
+    const classCount = uniqueClassIds.size;
+
     const studentIds = (studentProfiles || []).map(s => s.id);
 
     if (studentIds.length === 0) {
@@ -301,44 +324,65 @@ export const studentsAPI = {
         total_assessments: 0,
         completed_assessments: 0,
         in_progress_assessments: 0,
-        completion_rate: 0
+        completion_rate: 0,
+        class_count: classCount
       });
     }
 
-    // Get assessment counts
-    const { count: totalAssessments } = await supabase
-      .from('assessments')
-      .select('*', { count: 'exact', head: true })
-      .in('user_id', studentIds);
+    // Batch size to avoid URL too long errors (each UUID is ~36 chars)
+    const BATCH_SIZE = 30;
 
-    const { count: completedAssessments } = await supabase
-      .from('assessments')
-      .select('*', { count: 'exact', head: true })
-      .in('user_id', studentIds)
-      .eq('status', 'completed');
+    // Split studentIds into batches
+    const batches: string[][] = [];
+    for (let i = 0; i < studentIds.length; i += BATCH_SIZE) {
+      batches.push(studentIds.slice(i, i + BATCH_SIZE));
+    }
 
-    const { count: inProgressAssessments } = await supabase
-      .from('assessments')
-      .select('*', { count: 'exact', head: true })
-      .in('user_id', studentIds)
-      .eq('status', 'in_progress');
+    // Process batches and aggregate assessment counts
+    let totalAssessmentsCount = 0;
+    let completedAssessmentsCount = 0;
+    let inProgressAssessmentsCount = 0;
 
-    const total = totalAssessments || 0;
-    const completed = completedAssessments || 0;
+    for (const batch of batches) {
+      const { count: batchTotal } = await client
+        .from('assessments')
+        .select('*', { count: 'exact', head: true })
+        .in('user_id', batch);
+
+      const { count: batchCompleted } = await client
+        .from('assessments')
+        .select('*', { count: 'exact', head: true })
+        .in('user_id', batch)
+        .eq('status', 'completed');
+
+      const { count: batchInProgress } = await client
+        .from('assessments')
+        .select('*', { count: 'exact', head: true })
+        .in('user_id', batch)
+        .eq('status', 'in_progress');
+
+      totalAssessmentsCount += batchTotal || 0;
+      completedAssessmentsCount += batchCompleted || 0;
+      inProgressAssessmentsCount += batchInProgress || 0;
+    }
+
+    const total = totalAssessmentsCount;
+    const completed = completedAssessmentsCount;
     const completionRate = total > 0 ? (completed / total) * 100 : 0;
 
     return formatResponse({
       total_students: totalStudents || 0,
       total_assessments: total,
       completed_assessments: completed,
-      in_progress_assessments: inProgressAssessments || 0,
-      completion_rate: Math.round(completionRate * 100) / 100
+      in_progress_assessments: inProgressAssessmentsCount,
+      completion_rate: Math.round(completionRate * 100) / 100,
+      class_count: classCount
     });
   },
 
   /**
    * Get detailed statistics by grade/organization
-   * 获取按组织的详细统计
+   * 获取按组织的详细统计（包含平均分、分数范围）
    */
   getGradeStatistics: async (): Promise<APIResponse<GradeStatistics[]>> => {
     const user = await getCurrentUser();
@@ -350,52 +394,194 @@ export const studentsAPI = {
       return formatResponse([]);
     }
 
-    // Get colleges
-    const { data: colleges } = await supabase
-      .from('colleges')
-      .select('*')
-      .order('code');
+    // RLS policies now allow teachers/admins to read assessments directly
+    // No need for admin client - use regular supabase client
+    const client = supabase;
 
+    // Check if user is admin or has school-level permission
+    const profile = await getUserProfile();
+    const isAdmin = profile?.role === 'admin';
+
+    // Get teacher's permissions to determine grouping level
+    const { data: permissions } = await supabase
+      .from('teacher_permissions')
+      .select('*')
+      .eq('teacher_id', user.id);
+
+    const hasSchoolPermission = isAdmin || permissions?.some(p => p.permission_level === 'school');
     const stats: GradeStatistics[] = [];
 
-    for (const college of (colleges || [])) {
-      // Check if teacher has access to this college
-      if (filter && !filter.collegeIds.includes(college.id)) {
-        continue;
+    // Helper function to calculate stats for a group of students
+    // Uses batching to avoid URL too long errors when there are many students
+    const calculateGroupStats = async (
+      groupName: string,
+      level: 'college' | 'major' | 'class',
+      studentIds: string[]
+    ): Promise<GradeStatistics> => {
+      if (studentIds.length === 0) {
+        return {
+          grade: groupName,
+          level,
+          total_students: 0,
+          total_assessments: 0,
+          completed_assessments: 0,
+          completion_rate: 0,
+          avg_score: null,
+          min_score: null,
+          max_score: null
+        };
       }
 
-      // Count students in this college
-      const { count: studentCount } = await supabase
-        .from('profiles')
-        .select('*', { count: 'exact', head: true })
-        .eq('role', 'student')
-        .eq('college_id', college.id);
+      // Batch size to avoid URL too long errors (each UUID is ~36 chars)
+      const BATCH_SIZE = 30;
 
-      // Get student IDs
-      const { data: studentProfiles } = await supabase
-        .from('profiles')
-        .select('id')
-        .eq('role', 'student')
-        .eq('college_id', college.id);
+      // Split studentIds into batches
+      const batches: string[][] = [];
+      for (let i = 0; i < studentIds.length; i += BATCH_SIZE) {
+        batches.push(studentIds.slice(i, i + BATCH_SIZE));
+      }
 
-      const studentIds = (studentProfiles || []).map(s => s.id);
+      // Process batches and aggregate results
+      let totalAssessments = 0;
+      let completedAssessments = 0;
+      const allScores: number[] = [];
 
-      let completedCount = 0;
-      if (studentIds.length > 0) {
-        const { count } = await supabase
+      for (const batch of batches) {
+        // Get assessment counts for this batch
+        const { count: batchTotal } = await client
           .from('assessments')
           .select('*', { count: 'exact', head: true })
-          .in('user_id', studentIds)
+          .in('user_id', batch);
+
+        const { count: batchCompleted } = await client
+          .from('assessments')
+          .select('*', { count: 'exact', head: true })
+          .in('user_id', batch)
           .eq('status', 'completed');
-        completedCount = count || 0;
+
+        totalAssessments += batchTotal || 0;
+        completedAssessments += batchCompleted || 0;
+
+        // Get completed assessments with scores for this batch
+        const { data: batchAssessments } = await client
+          .from('assessments')
+          .select('raw_scores')
+          .in('user_id', batch)
+          .eq('status', 'completed');
+
+        // Collect scores from this batch
+        const batchScores = (batchAssessments || [])
+          .map(a => a.raw_scores?.total_score ?? a.raw_scores?.final_score)
+          .filter((s): s is number => typeof s === 'number');
+
+        allScores.push(...batchScores);
       }
 
-      stats.push({
-        grade: college.name,
-        student_count: studentCount || 0,
-        completed_count: completedCount,
-        completion_rate: studentCount ? Math.round((completedCount / (studentCount || 1)) * 100) / 100 : 0
-      });
+      // Calculate score statistics from all batches
+      const avgScore = allScores.length > 0
+        ? Math.round((allScores.reduce((a, b) => a + b, 0) / allScores.length) * 100) / 100
+        : null;
+      const minScore = allScores.length > 0 ? Math.min(...allScores) : null;
+      const maxScore = allScores.length > 0 ? Math.max(...allScores) : null;
+
+      const completionRate = totalAssessments > 0 ? Math.round((completedAssessments / totalAssessments) * 100 * 100) / 100 : 0;
+
+      return {
+        grade: groupName,
+        level,
+        total_students: studentIds.length,
+        total_assessments: totalAssessments,
+        completed_assessments: completedAssessments,
+        completion_rate: completionRate,
+        avg_score: avgScore,
+        min_score: minScore,
+        max_score: maxScore
+      };
+    };
+
+    if (hasSchoolPermission || !filter) {
+      // School-level: Group by colleges
+      const { data: colleges } = await client
+        .from('colleges')
+        .select('id, name')
+        .order('code');
+
+      for (const college of (colleges || [])) {
+        const { data: studentProfiles } = await client
+          .from('profiles')
+          .select('id')
+          .eq('role', 'student')
+          .eq('college_id', college.id);
+
+        const studentIds = (studentProfiles || []).map(s => s.id);
+        const stat = await calculateGroupStats(college.name, 'college', studentIds);
+        if (stat.total_students > 0) {
+          stats.push(stat);
+        }
+      }
+    } else if (filter.collegeIds.length > 0) {
+      // College-level: Group by majors in those colleges
+      const { data: majors } = await client
+        .from('majors')
+        .select('id, name')
+        .in('college_id', filter.collegeIds)
+        .order('code');
+
+      for (const major of (majors || [])) {
+        const { data: studentProfiles } = await client
+          .from('profiles')
+          .select('id')
+          .eq('role', 'student')
+          .eq('major_id', major.id);
+
+        const studentIds = (studentProfiles || []).map(s => s.id);
+        const stat = await calculateGroupStats(major.name, 'major', studentIds);
+        if (stat.total_students > 0) {
+          stats.push(stat);
+        }
+      }
+    } else if (filter.majorIds.length > 0) {
+      // Major-level: Group by classes in those majors
+      const { data: classes } = await client
+        .from('classes')
+        .select('id, name')
+        .in('major_id', filter.majorIds)
+        .order('name');
+
+      for (const cls of (classes || [])) {
+        const { data: studentProfiles } = await client
+          .from('profiles')
+          .select('id')
+          .eq('role', 'student')
+          .eq('class_id', cls.id);
+
+        const studentIds = (studentProfiles || []).map(s => s.id);
+        const stat = await calculateGroupStats(cls.name, 'class', studentIds);
+        if (stat.total_students > 0) {
+          stats.push(stat);
+        }
+      }
+    } else if (filter.classIds.length > 0) {
+      // Class-level: Show each class directly
+      const { data: classes } = await client
+        .from('classes')
+        .select('id, name')
+        .in('id', filter.classIds)
+        .order('name');
+
+      for (const cls of (classes || [])) {
+        const { data: studentProfiles } = await client
+          .from('profiles')
+          .select('id')
+          .eq('role', 'student')
+          .eq('class_id', cls.id);
+
+        const studentIds = (studentProfiles || []).map(s => s.id);
+        const stat = await calculateGroupStats(cls.name, 'class', studentIds);
+        if (stat.total_students > 0) {
+          stats.push(stat);
+        }
+      }
     }
 
     return formatResponse(stats);

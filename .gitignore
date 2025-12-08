@@ -36,3 +36,9 @@ npm-debug.log*
 
 # Testing
 coverage/
+
+# npm cache
+.npm/
+
+# Sensitive files
+测试账户密码.md

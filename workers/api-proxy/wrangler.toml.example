@@ -1,0 +1,10 @@
+name = "api-proxy-worker"
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+[vars]
+BACKEND_URL = "http://your-backend-url/api/v1"
+SUPABASE_URL = "https://your-supabase-url"
+SUPABASE_ANON_KEY = "your-anon-key"
+SUPABASE_SERVICE_KEY = "your-service-key"
+ENVIRONMENT = "production"

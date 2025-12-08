@@ -93,8 +93,8 @@ export default function Register() {
       navigate('/login');
     } catch (error: any) {
       console.error(error);
-      const errorMsg = error.response?.data?.detail || '注册失败';
-      toast.error(errorMsg);
+      // Error is already handled by authStore, don't show duplicate toast
+      // The authStore.register() function shows appropriate toast messages
     } finally {
       setIsLoading(false);
     }

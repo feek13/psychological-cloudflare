@@ -24,6 +24,8 @@ interface StatusMapItem {
 export default function Dashboard() {
   const navigate = useNavigate();
   const user = authStore((s) => s.user);
+  const initialized = authStore((s) => s.initialized);
+  const isAuthenticated = authStore((s) => s.isAuthenticated);
   const [loading, setLoading] = useState(true);
   const [scales, setScales] = useState<Scale[]>([]);
   const [allAssessments, setAllAssessments] = useState<Assessment[]>([]);
@@ -41,12 +43,36 @@ export default function Dashboard() {
     }
   }, [user, navigate]);
 
+  // 当用户ID变化时（切换账户），重置状态
   useEffect(() => {
-    // Load previous stats from localStorage
-    const savedStats = localStorage.getItem('dashboard_stats');
+    if (user?.id) {
+      // 重置状态以触发重新获取
+      setScales([]);
+      setAllAssessments([]);
+      setScoreStats(null);
+      setStatusMap({});
+      setDataLoaded(false);
+      setLoading(true);
+      setStatusLoading(true);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    // Don't fetch data until auth is initialized and user is authenticated
+    if (!initialized || !isAuthenticated || !user?.id) {
+      return;
+    }
+
+    // Load previous stats from localStorage (使用用户ID区分的 key)
+    const statsKey = `dashboard_stats_${user.id}`;
+    const savedStats = localStorage.getItem(statsKey);
     if (savedStats) {
       try {
-        setPrevStats(JSON.parse(savedStats));
+        const parsed = JSON.parse(savedStats);
+        // 验证数据格式有效
+        if (parsed && typeof parsed.total === 'number') {
+          setPrevStats(parsed);
+        }
       } catch {
         // Ignore parse errors
       }
@@ -99,7 +125,10 @@ export default function Dashboard() {
             const total = completed + inProgress;
 
             const newStats = { total, completed, inProgress };
-            localStorage.setItem('dashboard_stats', JSON.stringify(newStats));
+            // 使用用户ID区分的 key 存储
+            if (user?.id) {
+              localStorage.setItem(`dashboard_stats_${user.id}`, JSON.stringify(newStats));
+            }
             setDataLoaded(true);
           }
         }
@@ -131,7 +160,7 @@ export default function Dashboard() {
       isMounted = false;
       abortController.abort();
     };
-  }, []);
+  }, [initialized, isAuthenticated, user?.id]);
 
   // 使用 useMemo 计算统计数据，避免重复计算
   const stats = useMemo(() => {
@@ -171,38 +200,21 @@ export default function Dashboard() {
           <SkeletonGrid count={4} columns={4} />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {/* Total Assessments Card */}
+            {/* Available Scales Card - 可参与测评数 */}
             <Card variant="gradient" className="relative overflow-hidden border-2 border-primary-200 dark:border-primary-800">
               <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-br from-primary-200 to-primary-300 dark:from-primary-800 dark:to-primary-900 rounded-full -mr-16 -mt-16 opacity-30" />
               <div className="relative flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300 mb-2">
                     <ClipboardList size={20} />
-                    <span className="text-sm font-medium">总测评数</span>
+                    <span className="text-sm font-medium">可参与测评</span>
                   </div>
                   <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-                    {stats.total}
+                    {scales.length}
                   </div>
-                  {dataLoaded && (() => {
-                    const trend = getTrendInfo(stats.total, prevStats.total);
-                    return trend.change > 0 ? (
-                      <div className={`flex items-center gap-1 text-sm ${
-                        trend.trend === 'up' ? 'text-green-600 dark:text-green-400'
-                          : trend.trend === 'down' ? 'text-red-600 dark:text-red-400'
-                          : 'text-gray-600 dark:text-gray-400'
-                      }`}>
-                        {trend.trend === 'up' && <TrendingUp size={16} />}
-                        {trend.trend === 'down' && <TrendingDown size={16} />}
-                        {trend.trend === 'neutral' && <Minus size={16} />}
-                        <span className="font-medium">{trend.change.toFixed(1)}%</span>
-                        <span className="text-gray-500 dark:text-gray-400">较上次</span>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        {stats.total > 0 ? '累计参与测评' : '开始首次测评'}
-                      </div>
-                    );
-                  })()}
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                    {scales.length > 0 ? '共有可参与的测评量表' : '暂无可用测评'}
+                  </div>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
                   <ClipboardList className="text-primary-600 dark:text-primary-400" size={24} />
@@ -254,38 +266,25 @@ export default function Dashboard() {
               </div>
             </Card>
 
-            {/* In Progress Card */}
+            {/* Remaining Scales Card - 待完成测评 */}
             <Card variant="gradient" className="relative overflow-hidden border-2 border-yellow-200 dark:border-yellow-800">
               <div className="absolute top-0 right-0 w-32 h-32 bg-yellow-100 dark:bg-yellow-900/20 rounded-full -mr-16 -mt-16 opacity-50" />
               <div className="relative flex items-start justify-between">
                 <div>
                   <div className="flex items-center gap-2 text-gray-700 dark:text-gray-300 mb-2">
                     <Clock size={20} />
-                    <span className="text-sm font-medium">进行中</span>
+                    <span className="text-sm font-medium">待完成</span>
                   </div>
                   <div className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
-                    {stats.inProgress}
+                    {Math.max(0, scales.length - stats.completed)}
                   </div>
-                  {dataLoaded && (() => {
-                    const trend = getTrendInfo(stats.inProgress, prevStats.inProgress);
-                    return stats.inProgress > 0 && trend.change > 0 ? (
-                      <div className={`flex items-center gap-1 text-sm ${
-                        trend.trend === 'up' ? 'text-green-600 dark:text-green-400'
-                          : trend.trend === 'down' ? 'text-red-600 dark:text-red-400'
-                          : 'text-gray-600 dark:text-gray-400'
-                      }`}>
-                        {trend.trend === 'up' && <TrendingUp size={16} />}
-                        {trend.trend === 'down' && <TrendingDown size={16} />}
-                        {trend.trend === 'neutral' && <Minus size={16} />}
-                        <span className="font-medium">{trend.change.toFixed(1)}%</span>
-                        <span className="text-gray-500 dark:text-gray-400">较上次</span>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-gray-500 dark:text-gray-400">
-                        {stats.inProgress > 0 ? '待完成测评' : '暂无进行中测评'}
-                      </div>
-                    );
-                  })()}
+                  <div className="text-sm text-gray-500 dark:text-gray-400">
+                    {stats.inProgress > 0
+                      ? `${stats.inProgress} 个进行中`
+                      : scales.length - stats.completed > 0
+                        ? '尚未开始的测评'
+                        : '已完成全部测评'}
+                  </div>
                 </div>
                 <div className="w-12 h-12 rounded-xl bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center">
                   <Clock className="text-yellow-600 dark:text-yellow-400" size={24} />

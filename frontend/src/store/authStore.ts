@@ -5,11 +5,16 @@ import type { User } from '@/types/auth';
 import toast from 'react-hot-toast';
 import type { AuthChangeEvent, Session } from '@supabase/supabase-js';
 
+interface AuthSubscription {
+  unsubscribe: () => void;
+}
+
 interface AuthState {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
   initialized: boolean;
+  authSubscription: AuthSubscription | null;
 
   // Actions
   login: (email: string, password: string) => Promise<void>;
@@ -28,6 +33,8 @@ interface AuthState {
   fetchUser: () => Promise<void>;
   updateUser: (data: Partial<User>) => Promise<void>;
   initialize: () => Promise<void>;
+  cleanup: () => void;
+  clearUserCache: (userId?: string) => void;
 }
 
 export const authStore = create<AuthState>()(
@@ -37,6 +44,25 @@ export const authStore = create<AuthState>()(
       isAuthenticated: false,
       isLoading: false,
       initialized: false,
+      authSubscription: null,
+
+      // 清除用户相关的 localStorage 缓存（不包括 auth-storage，由 Zustand persist 管理）
+      clearUserCache: (userId?: string) => {
+        const id = userId || get().user?.id;
+        if (id) {
+          localStorage.removeItem(`dashboard_stats_${id}`);
+        }
+        // 注意：不要删除 auth-storage，它由 Zustand persist middleware 管理
+      },
+
+      // 清理 auth 订阅
+      cleanup: () => {
+        const subscription = get().authSubscription;
+        if (subscription) {
+          subscription.unsubscribe();
+          set({ authSubscription: null });
+        }
+      },
 
       initialize: async () => {
         if (get().initialized) return;
@@ -71,8 +97,8 @@ export const authStore = create<AuthState>()(
             set({ initialized: true });
           }
 
-          // Listen for auth state changes
-          supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, session: Session | null) => {
+          // Listen for auth state changes and store subscription for cleanup
+          const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: AuthChangeEvent, session: Session | null) => {
             if (event === 'SIGNED_IN' && session?.user) {
               try {
                 const profile = await getUserProfile(session.user.id);
@@ -98,15 +124,21 @@ export const authStore = create<AuthState>()(
                 console.error('Failed to fetch profile on auth change:', error);
               }
             } else if (event === 'SIGNED_OUT') {
+              // 注意：不在这里调用 clearUserCache，因为 logout() 已经调用过了
+              // 只重置状态
               set({
                 user: null,
                 isAuthenticated: false,
+                initialized: false,  // 重置 initialized 以便下次登录时重新初始化
               });
             } else if (event === 'TOKEN_REFRESHED') {
               // Token refresh is handled automatically by Supabase SDK
               console.log('Token refreshed');
             }
           });
+
+          // 保存订阅以便清理
+          set({ authSubscription: subscription });
         } catch (error) {
           console.error('Failed to initialize auth:', error);
           set({ initialized: true });
@@ -116,6 +148,12 @@ export const authStore = create<AuthState>()(
       login: async (email, password) => {
         try {
           set({ isLoading: true });
+
+          // 确保先清除任何现有会话（防止切换账户时的状态冲突）
+          const { data: { session: existingSession } } = await supabase.auth.getSession();
+          if (existingSession) {
+            await supabase.auth.signOut();
+          }
 
           const { data, error } = await supabase.auth.signInWithPassword({
             email,
@@ -147,6 +185,7 @@ export const authStore = create<AuthState>()(
                 updated_at: profile?.updated_at || '',
               },
               isAuthenticated: true,
+              initialized: true,  // 确保登录后 initialized 为 true
             });
 
             toast.success('登录成功');
@@ -204,6 +243,8 @@ export const authStore = create<AuthState>()(
             toast.error('该邮箱已被注册');
           } else if (message.includes('Password should be')) {
             toast.error('密码至少需要6位');
+          } else if (message.includes('profiles_username_key') || message.includes('duplicate key') || message.includes('Database error saving new user')) {
+            toast.error('用户名已被使用，请更换用户名');
           } else {
             toast.error(message);
           }
@@ -215,18 +256,24 @@ export const authStore = create<AuthState>()(
 
       logout: async () => {
         try {
+          // 先清除用户缓存（在 user 被清除之前）
+          get().clearUserCache();
+
           await supabase.auth.signOut();
           set({
             user: null,
             isAuthenticated: false,
+            initialized: false,  // 重置 initialized 以便下次登录时重新初始化
           });
           toast.success('已登出');
         } catch (error) {
           console.error('Logout error:', error);
           // Still clear local state even if API call fails
+          get().clearUserCache();
           set({
             user: null,
             isAuthenticated: false,
+            initialized: false,
           });
         }
       },

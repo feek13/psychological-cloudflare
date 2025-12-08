@@ -1,0 +1,10 @@
+name = "api-proxy-worker"
+main = "src/index.ts"
+compatibility_date = "2024-06-01"
+
+[vars]
+BACKEND_URL = "http://148.135.56.115/api/v1"
+SUPABASE_URL = "http://148.135.56.115:8000"
+SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6InN1cGFiYXNlIiwiaWF0IjoxNzYyNjAwNDc1LCJleHAiOjIwNzc5NjA0NzV9.BeDC8cD5P1lYGI-8cgXR_r_LJAmVlSerY810Rz8_TcQ"
+SUPABASE_SERVICE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoic3VwYWJhc2UiLCJpYXQiOjE3NjI2MDA0NzUsImV4cCI6MjA3Nzk2MDQ3NX0.bDOyrbbuQF6b8RurY-6gRYPx_6ijSKCSSNrLN9g4MsA"
+ENVIRONMENT = "production"

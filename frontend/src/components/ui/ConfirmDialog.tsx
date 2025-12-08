@@ -68,15 +68,17 @@ export default function ConfirmDialog({
   const styles = variantStyles[variant];
 
   const dialog = (
-    <AnimatePresence>
+    <AnimatePresence mode="wait">
       {isOpen && (
-        <>
+        <motion.div
+          key="confirm-dialog-container"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+        >
           {/* Backdrop */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+          <div
             className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[9998]"
             onClick={onCancel}
           />
@@ -128,7 +130,7 @@ export default function ConfirmDialog({
               </div>
             </motion.div>
           </div>
-        </>
+        </motion.div>
       )}
     </AnimatePresence>
   );

@@ -10,7 +10,7 @@
  * - Dark mode support
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getOrganizationTree, previewStudentId } from '@/api/organization';
 import type { College, Major, Class } from '@/types/organization';
 
@@ -55,6 +55,15 @@ export default function OrganizationSelector({
   const [enrollmentYear, setEnrollmentYear] = useState<number>(
     value?.enrollmentYear || new Date().getFullYear()
   );
+
+  // Use refs to avoid infinite loops caused by callback identity changes
+  const onChangeRef = useRef(onChange);
+  const lastPreviewParamsRef = useRef<string>('');
+
+  // Keep onChange ref in sync
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  }, [onChange]);
 
   // Load organization tree on mount
   useEffect(() => {
@@ -108,6 +117,7 @@ export default function OrganizationSelector({
   }, [selectedMajor, majors, value?.majorId]);
 
   // Trigger onChange when all fields are selected
+  // Using ref for onChange to prevent infinite loops when parent passes inline function
   useEffect(() => {
     if (selectedCollege && selectedMajor && selectedClass && enrollmentYear) {
       const college = colleges.find((c) => c.id === selectedCollege);
@@ -120,7 +130,8 @@ export default function OrganizationSelector({
           ? classObj.class_number
           : parseInt(classCodeValue || '0', 10);
 
-        onChange?.({
+        // Use ref to call onChange without it being in dependencies
+        onChangeRef.current?.({
           collegeId: selectedCollege,
           majorId: selectedMajor,
           classId: selectedClass,
@@ -131,12 +142,17 @@ export default function OrganizationSelector({
         });
 
         // Load student ID preview if enabled
+        // Use deduplication to prevent duplicate API calls
         if (showPreview && Number.isFinite(classNumberValue) && classNumberValue > 0) {
-          loadPreview(college.code, major.code, enrollmentYear, classNumberValue);
+          const previewParams = `${college.code}-${major.code}-${enrollmentYear}-${classNumberValue}`;
+          if (previewParams !== lastPreviewParamsRef.current) {
+            lastPreviewParamsRef.current = previewParams;
+            loadPreview(college.code, major.code, enrollmentYear, classNumberValue);
+          }
         }
       }
     }
-  }, [selectedCollege, selectedMajor, selectedClass, enrollmentYear, colleges, majors, classes, onChange, showPreview]);
+  }, [selectedCollege, selectedMajor, selectedClass, enrollmentYear, colleges, majors, classes, showPreview]);
 
   const loadPreview = async (
     collegeCode: string,
@@ -247,7 +263,7 @@ export default function OrganizationSelector({
           <option value="">请选择班级</option>
           {classes.map((classItem) => (
             <option key={classItem.id} value={classItem.id}>
-              {classItem.name}
+              {classItem.class_name || classItem.name || `${classItem.class_number}班`}
             </option>
           ))}
         </select>

@@ -84,12 +84,11 @@ async function handleScore(request: Request): Promise<Response> {
       );
     }
 
-    const response: ScoringResponse = {
+    // Return scores field to match frontend expected format
+    return jsonResponse({
       success: true,
-      data: result,
-    };
-
-    return jsonResponse(response);
+      scores: result,
+    });
   } catch (error) {
     console.error('Scoring error:', error);
 

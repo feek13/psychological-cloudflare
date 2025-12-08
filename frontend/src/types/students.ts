@@ -59,23 +59,21 @@ export interface StudentStatistics {
   completed_assessments: number;
   in_progress_assessments: number;
   completion_rate: number;
+  class_count?: number;           // 班级数量
   by_grade?: Record<string | number, GradeStatistics>;
   by_class?: Record<string, GradeStatistics>;
 }
 
 export interface GradeStatistics {
-  grade?: string | number; // Actually college name in org-based system
-  student_count: number;
-  completed_count: number;
-  completion_rate: number;
-  // Extended statistics
-  total_students?: number;
-  total_assessments?: number;
-  completed_assessments?: number;
-  avg_completion_rate?: number;
-  avg_score?: number | null;
-  min_score?: number | null;
-  max_score?: number | null;
+  grade: string;                    // 组织名称 (学院/专业/班级)
+  level?: 'college' | 'major' | 'class';  // 组织级别
+  total_students: number;           // 学生总数
+  total_assessments: number;        // 测评总数
+  completed_assessments: number;    // 已完成测评数
+  completion_rate: number;          // 完成率 (0-100)
+  avg_score: number | null;         // 平均分
+  min_score: number | null;         // 最低分
+  max_score: number | null;         // 最高分
 }
 
 export interface StudentFilters {

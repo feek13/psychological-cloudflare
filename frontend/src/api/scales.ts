@@ -141,21 +141,94 @@ export const scalesAPI = {
   },
 
   /**
-   * Get questions for a scale
+   * Get questions for a scale (auto-detects legacy or item bank mode)
    */
   getQuestions: async (id: string): Promise<APIResponse<{ questions: Question[]; total: number }>> => {
     try {
-      const { data, error, count } = await supabase
+      // First, try legacy questions table
+      const { data: legacyQuestions, error: legacyError } = await supabase
         .from('questions')
         .select('*', { count: 'exact' })
         .eq('scale_id', id)
         .order('order_num');
 
-      if (error) throw error;
+      if (legacyError) throw legacyError;
+
+      // If legacy questions exist, return them
+      if (legacyQuestions && legacyQuestions.length > 0) {
+        return formatResponse({
+          questions: legacyQuestions as Question[],
+          total: legacyQuestions.length,
+        }, null);
+      }
+
+      // If no legacy questions, try item bank mode
+      // First check if there are scale_items for this scale
+      const { data: scaleItems, error: scaleItemsError } = await supabase
+        .from('scale_items')
+        .select('*')
+        .eq('scale_id', id)
+        .order('order_num');
+
+      if (scaleItemsError) {
+        // scale_items table might not exist, fall back to empty
+        console.warn('scale_items query failed:', scaleItemsError);
+        return formatResponse({
+          questions: [],
+          total: 0,
+        }, null);
+      }
+
+      if (!scaleItems || scaleItems.length === 0) {
+        // No questions in either mode
+        return formatResponse({
+          questions: [],
+          total: 0,
+        }, null);
+      }
+
+      // Get item IDs from scale_items
+      const itemIds = scaleItems.map(si => si.item_id);
+
+      // Fetch items from item_bank
+      const { data: items, error: itemsError } = await supabase
+        .from('item_bank')
+        .select('*')
+        .in('id', itemIds);
+
+      if (itemsError) {
+        console.warn('item_bank query failed:', itemsError);
+        return formatResponse({
+          questions: [],
+          total: 0,
+        }, null);
+      }
+
+      // Create a map for quick lookup
+      const itemsMap = new Map((items || []).map(item => [item.id, item]));
+
+      // Transform scale_items + item_bank to Question format
+      const questions: Question[] = scaleItems
+        .map(si => {
+          const item = itemsMap.get(si.item_id);
+          if (!item) return null;
+
+          return {
+            id: si.item_id, // Use item_id as question id for answer tracking
+            scale_id: id,
+            content: item.content,
+            dimension: si.custom_dimension || item.domain,
+            options: item.options || [],
+            order_num: si.order_num,
+            reverse_scored: item.reverse_scored || false,
+            weight: si.custom_weight || item.default_weight || 1,
+          };
+        })
+        .filter((q): q is NonNullable<typeof q> => q !== null) as Question[];
 
       return formatResponse({
-        questions: (data || []) as Question[],
-        total: count || 0,
+        questions,
+        total: questions.length,
       }, null);
     } catch (error) {
       console.error('Get questions error:', error);
@@ -306,7 +379,7 @@ export const scalesAPI = {
 
   /**
    * Get published scales available to current student
-   * Filters by student's organization (college, major, class)
+   * Falls back to showing all active scales if publications table has issues
    */
   listPublished: async (params?: {
     skip?: number;
@@ -321,43 +394,56 @@ export const scalesAPI = {
       // Get student's profile for organization info
       const profile = await getUserProfile(user.id);
 
-      // Get all active publications
-      const { data: publications, error: pubError } = await supabase
-        .from('scale_publications')
-        .select('scale_id, visibility_type, target_college_id, target_major_id, target_class_id')
-        .eq('is_active', true);
+      let visibleScaleIds: string[] = [];
 
-      if (pubError) throw pubError;
+      try {
+        // Try to get active publications using select=* to avoid column name issues
+        const { data: publications, error: pubError } = await supabase
+          .from('scale_publications')
+          .select('*')
+          .eq('is_active', true);
 
-      // Filter publications based on student's organization
-      const visibleScaleIds = (publications || [])
-        .filter(pub => {
-          switch (pub.visibility_type) {
-            case 'all':
-              return true;
-            case 'college':
-              return pub.target_college_id === profile.college_id;
-            case 'major':
-              return pub.target_major_id === profile.major_id;
-            case 'class':
-              return pub.target_class_id === profile.class_id;
-            default:
-              return false;
-          }
-        })
-        .map(pub => pub.scale_id);
+        if (pubError) throw pubError;
 
-      if (visibleScaleIds.length === 0) {
-        return formatResponse({ items: [], total: 0 }, null);
+        // Filter publications based on student's organization
+        // Use dynamic column names to handle different database schemas
+        visibleScaleIds = (publications || [])
+          .filter(pub => {
+            const visType = pub.visibility_type;
+            if (visType === 'all') return true;
+            if (visType === 'college') {
+              const targetCollegeId = pub.target_college_id || pub.college_id;
+              return targetCollegeId === profile.college_id;
+            }
+            if (visType === 'major') {
+              const targetMajorId = pub.target_major_id || pub.major_id;
+              return targetMajorId === profile.major_id;
+            }
+            if (visType === 'class') {
+              const targetClassId = pub.target_class_id || pub.class_id;
+              return targetClassId === profile.class_id;
+            }
+            return false;
+          })
+          .map(pub => pub.scale_id);
+      } catch (pubError) {
+        // If publications table query fails, fall back to showing all active scales
+        console.warn('Publications query failed, showing all active scales:', pubError);
+        visibleScaleIds = []; // Empty means show all
       }
 
-      // Get scales
+      // Build scales query
       let query = supabase
         .from('scales')
         .select('*', { count: 'exact' })
-        .in('id', visibleScaleIds)
         .eq('is_active', true)
         .order('created_at', { ascending: false });
+
+      // Only filter by scale IDs if we have valid publications
+      if (visibleScaleIds.length > 0) {
+        query = query.in('id', visibleScaleIds);
+      }
+      // If visibleScaleIds is empty (no publications or error), show all active scales
 
       // Pagination
       if (params?.skip !== undefined) {

@@ -228,7 +228,8 @@ export default function AssessmentPage() {
     );
   }
 
-  if (!assessment || !currentQuestion) {
+  // Assessment not found
+  if (!assessment) {
     return (
       <MainLayout>
         <div className="max-w-4xl mx-auto px-4">
@@ -239,6 +240,26 @@ export default function AssessmentPage() {
             </h2>
             <p className="text-gray-600 dark:text-gray-400 mb-4">
               该测评不存在或已被删除
+            </p>
+            <Button onClick={() => navigate('/dashboard')}>返回首页</Button>
+          </Card>
+        </div>
+      </MainLayout>
+    );
+  }
+
+  // Assessment exists but no questions (empty scale)
+  if (!currentQuestion) {
+    return (
+      <MainLayout>
+        <div className="max-w-4xl mx-auto px-4">
+          <Card className="text-center py-12">
+            <AlertCircle className="mx-auto text-amber-500 mb-4" size={48} />
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">
+              量表暂无题目
+            </h2>
+            <p className="text-gray-600 dark:text-gray-400 mb-4">
+              该量表（{assessment.scales?.name || '未知量表'}）尚未添加题目，请联系教师处理
             </p>
             <Button onClick={() => navigate('/dashboard')}>返回首页</Button>
           </Card>

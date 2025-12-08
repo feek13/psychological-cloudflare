@@ -240,6 +240,7 @@ function generateFallbackReport(
 export const assessmentsAPI = {
   /**
    * Create a new assessment
+   * Note: Uses separate queries to avoid PostgREST embedded query issues
    */
   create: async (scaleId: string): Promise<APIResponse<Assessment>> => {
     try {
@@ -261,15 +262,27 @@ export const assessmentsAPI = {
         if (existing.status === 'completed') {
           return formatResponse(null, new Error('您已完成此量表的测评'));
         }
-        // Return existing in-progress assessment
+        // Return existing in-progress assessment with scale info
         const { data: assessment, error } = await supabase
           .from('assessments')
-          .select('*, scales(id, code, name, category)')
+          .select('*')
           .eq('id', existing.id)
           .single();
 
         if (error) throw error;
-        return formatResponse(assessment as Assessment, null, '继续进行中的测评');
+
+        // Fetch scale separately
+        let scale = null;
+        if (assessment?.scale_id) {
+          const { data: scaleData } = await supabase
+            .from('scales')
+            .select('id, code, name, category')
+            .eq('id', assessment.scale_id)
+            .single();
+          scale = scaleData;
+        }
+
+        return formatResponse({ ...assessment, scales: scale } as Assessment, null, '继续进行中的测评');
       }
 
       // Create new assessment
@@ -283,11 +296,23 @@ export const assessmentsAPI = {
           answers: {},
           started_at: new Date().toISOString(),
         })
-        .select('*, scales(id, code, name, category)')
+        .select('*')
         .single();
 
       if (error) throw error;
-      return formatResponse(newAssessment as Assessment, null, '测评已创建');
+
+      // Fetch scale separately
+      let scale = null;
+      if (newAssessment?.scale_id) {
+        const { data: scaleData } = await supabase
+          .from('scales')
+          .select('id, code, name, category')
+          .eq('id', newAssessment.scale_id)
+          .single();
+        scale = scaleData;
+      }
+
+      return formatResponse({ ...newAssessment, scales: scale } as Assessment, null, '测评已创建');
     } catch (error) {
       console.error('Create assessment error:', error);
       return formatResponse(null, error as Error);
@@ -296,6 +321,7 @@ export const assessmentsAPI = {
 
   /**
    * List user's assessments
+   * Note: Uses separate queries to avoid PostgREST embedded query issues
    */
   list: async (params?: {
     scale_id?: string;
@@ -309,11 +335,13 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('未登录'));
       }
 
+      // Step 1: Query assessments without embedded relation
+      // Note: assessments table uses 'started_at' not 'created_at'
       let query = supabase
         .from('assessments')
-        .select('*, scales(id, code, name, category)', { count: 'exact' })
+        .select('*', { count: 'exact' })
         .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
+        .order('started_at', { ascending: false });
 
       if (params?.scale_id) {
         query = query.eq('scale_id', params.scale_id);
@@ -327,12 +355,33 @@ export const assessmentsAPI = {
         query = query.limit(params.limit);
       }
 
-      const { data, error, count } = await query;
+      const { data: assessments, error, count } = await query;
 
       if (error) throw error;
 
+      // Step 2: Collect unique scale IDs and fetch scales separately
+      const scaleIds = [...new Set((assessments || []).map(a => a.scale_id).filter(Boolean))];
+      let scalesMap: Record<string, { id: string; code: string; name: string; category: string }> = {};
+
+      if (scaleIds.length > 0) {
+        const { data: scales } = await supabase
+          .from('scales')
+          .select('id, code, name, category')
+          .in('id', scaleIds);
+
+        if (scales) {
+          scalesMap = Object.fromEntries(scales.map(s => [s.id, s]));
+        }
+      }
+
+      // Step 3: Merge scales into assessments
+      const mergedAssessments = (assessments || []).map(a => ({
+        ...a,
+        scales: scalesMap[a.scale_id] || null,
+      }));
+
       return formatResponse({
-        items: (data || []) as Assessment[],
+        items: mergedAssessments as Assessment[],
         total: count || 0,
       }, null);
     } catch (error) {
@@ -343,6 +392,7 @@ export const assessmentsAPI = {
 
   /**
    * Get single assessment by ID
+   * Note: Uses separate queries to avoid PostgREST embedded query issues
    */
   get: async (id: string): Promise<APIResponse<Assessment>> => {
     try {
@@ -351,15 +401,34 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('未登录'));
       }
 
-      const { data, error } = await supabase
+      // Step 1: Query assessment without embedded relation
+      const { data: assessment, error } = await supabase
         .from('assessments')
-        .select('*, scales(id, code, name, category)')
+        .select('*')
         .eq('id', id)
         .eq('user_id', user.id)
         .single();
 
       if (error) throw error;
-      return formatResponse(data as Assessment, null);
+
+      // Step 2: Fetch scale separately if exists
+      let scale = null;
+      if (assessment?.scale_id) {
+        const { data: scaleData } = await supabase
+          .from('scales')
+          .select('id, code, name, category')
+          .eq('id', assessment.scale_id)
+          .single();
+        scale = scaleData;
+      }
+
+      // Step 3: Merge scale into assessment
+      const mergedAssessment = {
+        ...assessment,
+        scales: scale,
+      };
+
+      return formatResponse(mergedAssessment as Assessment, null);
     } catch (error) {
       console.error('Get assessment error:', error);
       return formatResponse(null, error as Error);
@@ -368,6 +437,7 @@ export const assessmentsAPI = {
 
   /**
    * Submit a single answer (auto-save)
+   * Note: Uses separate queries to avoid PostgREST embedded query issues
    */
   submitAnswer: async (
     id: string,
@@ -380,10 +450,10 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('未登录'));
       }
 
-      // Get current assessment
+      // Get current assessment (without embedded query)
       const { data: assessment, error: fetchError } = await supabase
         .from('assessments')
-        .select('answers, scales(id, code, name)')
+        .select('answers')
         .eq('id', id)
         .eq('user_id', user.id)
         .single();
@@ -417,6 +487,7 @@ export const assessmentsAPI = {
 
   /**
    * Submit complete assessment for scoring
+   * Note: Uses separate queries to avoid PostgREST embedded query issues
    */
   submit: async (
     id: string,
@@ -428,10 +499,10 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('未登录'));
       }
 
-      // Get assessment with scale info
+      // Get assessment without embedded query
       const { data: assessment, error: fetchError } = await supabase
         .from('assessments')
-        .select('*, scales(id, code, name, category, scoring_config)')
+        .select('*')
         .eq('id', id)
         .eq('user_id', user.id)
         .single();
@@ -441,7 +512,17 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('测评不存在'));
       }
 
-      const scale = assessment.scales as { id: string; code: string; name: string; scoring_config?: unknown };
+      // Fetch scale separately
+      const { data: scale, error: scaleError } = await supabase
+        .from('scales')
+        .select('id, code, name, category, scoring_config')
+        .eq('id', assessment.scale_id)
+        .single();
+
+      if (scaleError) throw scaleError;
+      if (!scale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
 
       // Get questions for this scale
       const { data: questions, error: questionsError } = await supabase
@@ -483,7 +564,7 @@ export const assessmentsAPI = {
         questionsWithAnswers
       );
 
-      // Update assessment with results
+      // Update assessment with results (without embedded query)
       const { data: updatedAssessment, error: updateError } = await supabase
         .from('assessments')
         .update({
@@ -498,11 +579,13 @@ export const assessmentsAPI = {
           },
         })
         .eq('id', id)
-        .select('*, scales(id, code, name, category)')
+        .select('*')
         .single();
 
       if (updateError) throw updateError;
-      return formatResponse(updatedAssessment as Assessment, null, '测评已完成');
+
+      // Merge scale into result
+      return formatResponse({ ...updatedAssessment, scales: scale } as Assessment, null, '测评已完成');
     } catch (error) {
       console.error('Submit assessment error:', error);
       return formatResponse(null, error as Error);
@@ -670,6 +753,7 @@ export const assessmentsAPI = {
 
   /**
    * Regenerate AI report for a completed assessment
+   * Note: Uses separate queries to avoid PostgREST embedded query issues
    */
   regenerateReport: async (id: string): Promise<APIResponse<Assessment>> => {
     try {
@@ -678,10 +762,10 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('未登录'));
       }
 
-      // Get assessment
+      // Get assessment without embedded query
       const { data: assessment, error: fetchError } = await supabase
         .from('assessments')
-        .select('*, scales(id, code, name, category)')
+        .select('*')
         .eq('id', id)
         .eq('user_id', user.id)
         .single();
@@ -695,7 +779,18 @@ export const assessmentsAPI = {
         return formatResponse(null, new Error('只能为已完成的测评重新生成报告'));
       }
 
-      const scale = assessment.scales as { id: string; code: string; name: string };
+      // Fetch scale separately
+      const { data: scale, error: scaleError } = await supabase
+        .from('scales')
+        .select('id, code, name, category')
+        .eq('id', assessment.scale_id)
+        .single();
+
+      if (scaleError) throw scaleError;
+      if (!scale) {
+        return formatResponse(null, new Error('量表不存在'));
+      }
+
       const answers = assessment.answers as Record<string, number>;
       const rawScores = assessment.raw_scores as ScoringResponse['scores'];
 
@@ -719,7 +814,7 @@ export const assessmentsAPI = {
         questionsWithAnswers
       );
 
-      // Update metadata with new report
+      // Update metadata with new report (without embedded query)
       const currentMetadata = (assessment.metadata as Record<string, unknown>) || {};
       const { data: updatedAssessment, error: updateError } = await supabase
         .from('assessments')
@@ -732,11 +827,13 @@ export const assessmentsAPI = {
           },
         })
         .eq('id', id)
-        .select('*, scales(id, code, name, category)')
+        .select('*')
         .single();
 
       if (updateError) throw updateError;
-      return formatResponse(updatedAssessment as Assessment, null, 'AI报告已重新生成');
+
+      // Merge scale into result
+      return formatResponse({ ...updatedAssessment, scales: scale } as Assessment, null, 'AI报告已重新生成');
     } catch (error) {
       console.error('Regenerate report error:', error);
       return formatResponse(null, error as Error);

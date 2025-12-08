@@ -13,6 +13,7 @@ import type {
   TeacherListItem,
   Grade,
 } from '@/types';
+import type { TeacherPermissionDetail } from '@/types/teachers';
 
 // Helper to format response
 const formatResponse = <T>(data: T): APIResponse<T> => ({
@@ -21,6 +22,80 @@ const formatResponse = <T>(data: T): APIResponse<T> => ({
 });
 
 export const teachersAPI = {
+  /**
+   * Get current teacher's permissions with organization names
+   * 获取当前教师的权限详情（包含组织名称）
+   */
+  getMyPermissions: async (): Promise<APIResponse<TeacherPermissionDetail[]>> => {
+    const user = await getCurrentUser();
+    if (!user) throw new Error('Not authenticated');
+
+    // Check user role - admin has all permissions
+    const profile = await getUserProfile();
+    if (profile?.role === 'admin') {
+      // Admin has school-level permission by default
+      return formatResponse([{
+        id: 'admin-default',
+        permission_level: 'school',
+        college_id: null,
+        major_id: null,
+        class_id: null,
+        college_name: undefined,
+        major_name: undefined,
+        class_name: undefined,
+        academic_year: '2024-2025'
+      }]);
+    }
+
+    const { data: permissions, error } = await supabase
+      .from('teacher_permissions')
+      .select('*')
+      .eq('teacher_id', user.id);
+
+    if (error) throw error;
+
+    if (!permissions || permissions.length === 0) {
+      return formatResponse([]);
+    }
+
+    // Collect IDs for batch queries
+    const collegeIds = [...new Set(permissions.filter(p => p.college_id).map(p => p.college_id))];
+    const majorIds = [...new Set(permissions.filter(p => p.major_id).map(p => p.major_id))];
+    const classIds = [...new Set(permissions.filter(p => p.class_id).map(p => p.class_id))];
+
+    // Batch fetch organization names
+    const [colleges, majors, classes] = await Promise.all([
+      collegeIds.length > 0
+        ? supabase.from('colleges').select('id, name').in('id', collegeIds).then(r => r.data || [])
+        : Promise.resolve([]),
+      majorIds.length > 0
+        ? supabase.from('majors').select('id, name').in('id', majorIds).then(r => r.data || [])
+        : Promise.resolve([]),
+      classIds.length > 0
+        ? supabase.from('classes').select('id, name').in('id', classIds).then(r => r.data || [])
+        : Promise.resolve([])
+    ]);
+
+    const collegeMap = new Map<string, string>(colleges.map(c => [c.id, c.name] as [string, string]));
+    const majorMap = new Map<string, string>(majors.map(m => [m.id, m.name] as [string, string]));
+    const classMap = new Map<string, string>(classes.map(c => [c.id, c.name] as [string, string]));
+
+    // Build permission details with organization names
+    const permissionDetails: TeacherPermissionDetail[] = permissions.map(perm => ({
+      id: perm.id,
+      permission_level: perm.permission_level as 'school' | 'college' | 'major' | 'class',
+      college_id: perm.college_id,
+      major_id: perm.major_id,
+      class_id: perm.class_id,
+      college_name: perm.college_id ? collegeMap.get(perm.college_id) : undefined,
+      major_name: perm.major_id ? majorMap.get(perm.major_id) : undefined,
+      class_name: perm.class_id ? classMap.get(perm.class_id) : undefined,
+      academic_year: perm.academic_year || '2024-2025'
+    }));
+
+    return formatResponse(permissionDetails);
+  },
+
   /**
    * Get current teacher's permissions
    * 获取当前教师的权限

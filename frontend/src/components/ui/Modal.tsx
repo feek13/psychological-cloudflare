@@ -42,24 +42,27 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', f
   };
 
   return (
-    <AnimatePresence>
+    <AnimatePresence mode="wait">
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <motion.div
+          key="modal-container"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.2 }}
+          className="fixed inset-0 z-50 flex items-center justify-center"
+        >
           {/* Backdrop with blur */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
+          <div
             className="absolute inset-0 bg-black/50 backdrop-blur-sm"
             onClick={onClose}
           />
 
           {/* Modal */}
           <motion.div
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            initial={{ scale: 0.95, y: 20 }}
+            animate={{ scale: 1, y: 0 }}
+            exit={{ scale: 0.95, y: 20 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
             className={`relative bg-white dark:bg-gray-800 rounded-xl shadow-lift-lg w-full ${sizeClasses[size]} mx-4 max-h-[90vh] overflow-y-auto`}
           >
@@ -86,7 +89,7 @@ export default function Modal({ isOpen, onClose, title, children, size = 'md', f
               </div>
             )}
           </motion.div>
-        </div>
+        </motion.div>
       )}
     </AnimatePresence>
   );

@@ -67,3 +67,19 @@ export interface TeacherStatistics {
   total_teachers: number;
   active_teachers: number;
 }
+
+/**
+ * 教师权限详情（带有组织名称）
+ * 用于仪表板显示教师负责的范围
+ */
+export interface TeacherPermissionDetail {
+  id: string;
+  permission_level: 'school' | 'college' | 'major' | 'class';
+  college_id?: string | null;
+  major_id?: string | null;
+  class_id?: string | null;
+  college_name?: string;
+  major_name?: string;
+  class_name?: string;
+  academic_year: string;
+}
