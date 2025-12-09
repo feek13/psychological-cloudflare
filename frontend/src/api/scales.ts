@@ -382,8 +382,14 @@ export const scalesAPI = {
         return formatResponse(null, new Error('未登录'));
       }
 
-      // Get student's profile for organization info
-      const profile = await getUserProfile(user.id);
+      // Try to get student's profile for organization info
+      // If profile fetch fails, we'll still show all published scales
+      let profile: { college_id?: string; major_id?: string; class_id?: string } | null = null;
+      try {
+        profile = await getUserProfile(user.id);
+      } catch (profileError) {
+        console.warn('Profile fetch failed, will show all published scales:', profileError);
+      }
 
       let visibleScaleIds: string[] = [];
 
@@ -402,6 +408,8 @@ export const scalesAPI = {
           .filter(pub => {
             const visType = pub.visibility_type;
             if (visType === 'all') return true;
+            // If no profile, only show 'all' visibility publications
+            if (!profile) return false;
             if (visType === 'college') {
               const targetCollegeId = pub.target_college_id || pub.college_id;
               return targetCollegeId === profile.college_id;
